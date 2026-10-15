@@ -1,3 +1,25 @@
+
+# Relaunch as administrator when needed
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    Write-Host 'Administrator privileges are required. Requesting elevation...' -ForegroundColor Yellow
+
+    $scriptUrl = 'https://wr.dallasrevolt.workers.dev/debloat'
+    $shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+    $bootstrap = "`$ErrorActionPreference = 'Stop'; `$code = Invoke-RestMethod -Uri '$scriptUrl'; & ([ScriptBlock]::Create(`$code))"
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
+
+    try {
+        Start-Process -FilePath $shell -Verb RunAs -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-EncodedCommand', $encodedCommand) -ErrorAction Stop
+    }
+    catch {
+        Write-Host 'Elevation was cancelled or could not be started.' -ForegroundColor Red
+    }
+
+    return
+}
+
 Clear-Host
 
 $ErrorActionPreference = 'Stop'
@@ -10,12 +32,14 @@ function Confirm-Action {
     return ($answer -match '^[Yy]$')
 }
 
+<#
 # Check administrator privileges
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Host 'Run PowerShell as Administrator.' -ForegroundColor Red
     return
 }
+#>
 
 # Identify the interactive user in the current Windows session
 $session = (Get-Process -Id $PID).SessionId
