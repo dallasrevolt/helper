@@ -1,3 +1,52 @@
+# Relaunch as administrator when needed
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    $scriptUrl = 'https://helper.dallasrevolt.workers.dev/make-admin'
+
+    $shellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+    if (-not $shellCommand) {
+        $shellCommand = Get-Command powershell.exe -ErrorAction Stop
+    }
+    $shell = $shellCommand.Source
+
+    $bootstrap = @"
+`$ErrorActionPreference = 'Stop'
+try {
+    `$response = Invoke-WebRequest -Uri '$scriptUrl' -UseBasicParsing -ErrorAction Stop
+    `$code = `$response.Content
+
+    if ([string]::IsNullOrWhiteSpace(`$code) -or `$code -match '(?is)^\s*(<!doctype html|<html|error code:\s*\d+|not found\b)') {
+        throw 'The endpoint did not return a valid PowerShell script.'
+    }
+
+    & ([ScriptBlock]::Create(`$code))
+}
+catch {
+    Write-Host "Failed to download or run the script: `$(`$_.Exception.Message)" -ForegroundColor Red
+    Write-Host 'Check the Cloudflare Worker route and GitHub file path.' -ForegroundColor Yellow
+}
+"@
+
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-EncodedCommand', $encodedCommand)
+
+    $terminal = Get-Command wt.exe -ErrorAction SilentlyContinue
+
+    try {
+        if ($terminal) {
+            Start-Process -FilePath $terminal.Source -Verb RunAs -ArgumentList (@('-w', 'new', $shell) + $arguments) -ErrorAction Stop
+        } else {
+            Start-Process -FilePath $shell -Verb RunAs -ArgumentList $arguments -ErrorAction Stop
+        }
+    }
+    catch {
+        Write-Host "Could not start the elevated console: $($_.Exception.Message)" -ForegroundColor Red
+    }
+
+    return
+}
+
 Clear-Host
 
 $G = 'Administradores'
