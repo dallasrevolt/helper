@@ -83,7 +83,7 @@ while ($true) {
 
     if ($u -match '^[Qq]$') {
         Clear-Host
-        break
+        exit
     }
 
     if ($u.Length -gt 30) {
