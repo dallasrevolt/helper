@@ -1,0 +1,138 @@
+Clear-Host
+
+$G = 'Administradores'
+$Protected = @('Administrador', 'desplieguem')
+$Profiles = @{}
+
+# Get local user profile names
+Get-ChildItem 'C:\Users' -Directory -Force -EA SilentlyContinue |
+    ForEach-Object {
+        $Profiles[$_.Name.ToLowerInvariant()] = $_.Name
+    }
+
+# Get current local administrator members
+$Members = @{}
+
+net localgroup $G 2>$null |
+    ForEach-Object {
+        $v = $_.Trim()
+
+        if (
+            $v -match '^(?:[^\\]+\\)?([A-Za-z0-9._-]+)$' -and
+            $v -notmatch '^(Alias name|Comment|Members|The command completed successfully)$'
+        ) {
+            $Members[$matches[1].ToLowerInvariant()] = $matches[1]
+        }
+    }
+
+while ($true) {
+    $u = (Read-Host 'Type username / [Q]uit').Trim()
+
+    if (!$u) {
+        continue
+    }
+
+    if ($u -match '^[Qq]$') {
+        Clear-Host
+        break
+    }
+
+    if ($u.Length -gt 30) {
+        $u = $u.Substring(0, 30)
+    }
+
+    # Validate username and check for a local profile
+    if (
+        $u -notmatch '^[A-Za-z0-9._-]+$' -or
+        !$Profiles.ContainsKey($u.ToLowerInvariant())
+    ) {
+        Write-Host 'Username not found.' -ForegroundColor Red
+        Write-Host ''
+        continue
+    }
+
+    $k = $u.ToLowerInvariant()
+    $A = $Members.ContainsKey($k)
+
+    if ($Protected -contains $u) {
+        $A = $true
+    }
+
+    # Handle users who are already administrators
+    if ($A) {
+        if ($Protected -contains $u) {
+            Write-Host -NoNewline $u -ForegroundColor Green
+
+            if ($u -ieq 'desplieguem') {
+                Write-Host ' already has local administrator privileges.'
+            } else {
+                Write-Host ' is already a local admin.'
+            }
+
+            Write-Host ''
+            continue
+        }
+
+        while ($true) {
+            Write-Host -NoNewline $u -ForegroundColor Green
+            Write-Host -NoNewline ' is already a local admin. Remove it? [Y]es / [N]o: '
+
+            $c = Read-Host
+
+            if ($c -match '^[Yy]$') {
+                net localgroup $G $u /delete | Out-Null
+
+                if ($LASTEXITCODE -eq 0) {
+                    $Members.Remove($k)
+
+                    Write-Host -NoNewline $u -ForegroundColor Green
+                    Write-Host ' was removed from local administrators.'
+                } else {
+                    Write-Host 'Unable to remove user.' -ForegroundColor Red
+                }
+
+                Write-Host ''
+                break
+            }
+
+            if ($c -match '^[Nn]$') {
+                Write-Host ''
+                break
+            }
+        }
+
+        continue
+    }
+
+    # Ask before granting local administrator privileges
+    while ($true) {
+        Write-Host -NoNewline 'Make '
+        Write-Host -NoNewline $u -ForegroundColor Green
+        Write-Host -NoNewline ' local admin? [Y]es / [N]o: '
+
+        $c = Read-Host
+
+        if ($c -match '^[Yy]$') {
+            net localgroup $G $u /add | Out-Null
+
+            if ($LASTEXITCODE -eq 0) {
+                $Members[$k] = $u
+
+                Write-Host -NoNewline $u -ForegroundColor Green
+                Write-Host ' is now a local admin.'
+            } else {
+                Write-Host "Failed. Windows error code: $LASTEXITCODE" -ForegroundColor Red
+            }
+
+            Write-Host ''
+            break
+        }
+
+        if ($c -match '^[Nn]$') {
+            Write-Host ''
+            break
+        }
+    }
+}
+
+Write-Host ''
