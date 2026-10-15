@@ -5,7 +5,7 @@ $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIde
 if (-not $isAdmin) {
     Write-Host 'Administrator privileges are required. Requesting elevation...' -ForegroundColor Yellow
 
-    $scriptUrl = 'https://wr.dallasrevolt.workers.dev/debloat'
+    $scriptUrl = 'https://helper.dallasrevolt.workers.dev/debloat'
     $shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
     $bootstrap = "`$ErrorActionPreference = 'Stop'; `$code = Invoke-RestMethod -Uri '$scriptUrl'; & ([ScriptBlock]::Create(`$code))"
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
