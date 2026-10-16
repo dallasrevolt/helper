@@ -406,7 +406,7 @@ function Invoke-SpecialAppxRemoval {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][string[]]$PackageNames,
-        [Parameter(Mandatory = $true)][object[]]$FoundPackages,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$FoundPackages,
         [Parameter(Mandatory = $true)][string]$UserSid
     )
 
