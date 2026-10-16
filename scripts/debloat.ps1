@@ -4,11 +4,11 @@ $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIde
 if (-not $isAdmin) {
     $scriptUrl = 'https://helper.dallasrevolt.workers.dev/debloat'
 
-    $shellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
-    if (-not $shellCommand) {
-        $shellCommand = Get-Command powershell.exe -ErrorAction Stop
+    # Use PowerShell 5 only
+    $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path -LiteralPath $shell)) {
+        throw 'Windows PowerShell 5.1 was not found.'
     }
-    $shell = $shellCommand.Source
 
     $bootstrap = @"
 `$ErrorActionPreference = 'Stop'
