@@ -137,19 +137,35 @@ foreach ($appName in $Apps.Keys) {
 $outlook = @($packages | Where-Object { $_.Name -in $OutlookNames })
 $oneDriveExe = Join-Path $profile 'AppData\Local\Microsoft\OneDrive\OneDrive.exe'
 
+# Build a unified list of detected apps
+$DetectedApps = @()
+
+foreach ($appName in $Targets.Keys) {
+    $DetectedApps += $appName
+}
+
+if ($outlook.Count -gt 0 -and $DetectedApps -notcontains 'New Outlook') {
+    $DetectedApps += 'New Outlook'
+}
+
+if (Test-Path -LiteralPath $oneDriveExe) {
+    $DetectedApps += 'OneDrive'
+}
+
 # Display detection results
 Write-Host ''
 Write-Host 'Checking for apps:' -NoNewline
 
-if ($Targets.Count -eq 0) {
+if ($DetectedApps.Count -eq 0) {
     Write-Host ' ✗ No apps found.' -ForegroundColor Red
 } else {
-    Write-Host " ✓ $($Targets.Count) app(s) found:" -ForegroundColor Green
-    foreach ($appName in $Targets.Keys) {
+    Write-Host " ✓ $($DetectedApps.Count) app(s) found:" -ForegroundColor Green
+
+    foreach ($appName in $DetectedApps) {
         Write-Host "- $appName"
     }
 
-    if (Confirm-Action 'Uninstall apps? [Y]es / [N]o') {
+    if ($Targets.Count -gt 0 -and (Confirm-Action 'Uninstall apps? [Y]es / [N]o')) {
         $allPackages = @(
             $Targets.Values |
                 ForEach-Object { $_ } |
@@ -168,12 +184,11 @@ if ($Targets.Count -eq 0) {
             try {
                 Remove-AppxPackage -Package $package.PackageFullName -User $sid -ErrorAction Stop
             } catch {
-                # Final verification determines whether removal succeeded.
+                Write-Host "Failed to uninstall $($package.Name): $($_.Exception.Message)" -ForegroundColor Red
             }
         }
 
         Write-Progress -Activity 'Uninstalling apps' -Completed
-        Write-Host 'Uninstalling: ✓ Done!'
 
         # Verify removal against the target user's package list
         Write-Host 'Verifying:' -NoNewline
