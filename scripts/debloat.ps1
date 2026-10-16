@@ -1,4 +1,3 @@
-
 # Relaunch as administrator when needed
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -85,7 +84,7 @@ function Write-TerminalProgress {
     $line = '{0}:  {1} {2}%' -f $Activity, $bar, $percent
 
     $padding = [Math]::Max(0, $script:ProgressLineLength - $line.Length)
-    [Console]::Write("`r" + $line + (' ' * $padding))
+    [Console]::Write("`r" + $line + (' ' * $padding) + "`r")
 
     $script:ProgressLineLength = [Math]::Max($script:ProgressLineLength, $line.Length)
 }
@@ -254,6 +253,8 @@ else {
         $uninstallFailed = $false
 
         foreach ($package in $allPackages) {
+            Write-TerminalProgress -Activity 'Uninstalling apps' -Current $i -Total $total
+        
             try {
                 Remove-AppxPackage -Package $package.PackageFullName -User $sid -ErrorAction Stop
             }
@@ -261,7 +262,7 @@ else {
                 $uninstallFailed = $true
                 Write-Host "`nFailed to uninstall $($package.Name): $($_.Exception.Message)" -ForegroundColor Red
             }
-
+        
             $i++
             Write-TerminalProgress -Activity 'Uninstalling apps' -Current $i -Total $total
         }
@@ -281,12 +282,14 @@ else {
                 $verifyIndex = 0
 
                 foreach ($appName in $verifyNames) {
+                    Write-TerminalProgress -Activity 'Verifying removal' -Current $verifyIndex -Total $verifyTotal
+                
                     $left = @($remaining | Where-Object { $_.Name -in $Apps[$appName] })
-
+                
                     if ($left.Count -gt 0) {
                         $notRemoved += $appName
                     }
-
+                
                     $verifyIndex++
                     Write-TerminalProgress -Activity 'Verifying removal' -Current $verifyIndex -Total $verifyTotal
                 }
