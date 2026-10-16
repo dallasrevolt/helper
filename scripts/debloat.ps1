@@ -257,11 +257,17 @@ else {
             Write-TerminalProgress -Activity 'Uninstalling apps' -Current $i -Total $total
         
             try {
+                $previousProgressPreference = $ProgressPreference
+                $ProgressPreference = 'SilentlyContinue'
+            
                 Remove-AppxPackage -Package $package.PackageFullName -User $sid -ErrorAction Stop
             }
             catch {
                 $uninstallFailed = $true
                 Write-Host "`nFailed to uninstall $($package.Name): $($_.Exception.Message)" -ForegroundColor Red
+            }
+            finally {
+                $ProgressPreference = $previousProgressPreference
             }
         
             $i++
