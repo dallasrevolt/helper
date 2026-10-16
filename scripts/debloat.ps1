@@ -47,6 +47,7 @@ catch {
 }
 
 Clear-Host
+$ProgressPreference = 'SilentlyContinue'
 $ErrorActionPreference = 'Stop'
 
 # --------------------------------------------------
