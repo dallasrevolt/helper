@@ -467,8 +467,13 @@ function Invoke-SpecialAppxRemoval {
 }
 
 # Process special apps in the requested order
-Invoke-SpecialAppxRemoval -Name 'New Outlook' -PackageNames $OutlookNames -FoundPackages $outlook -UserSid $sid
-Invoke-SpecialAppxRemoval -Name 'Teams' -PackageNames $TeamsNames -FoundPackages $teams -UserSid $sid
+if ($outlook.Count -gt 0) {
+    Invoke-SpecialAppxRemoval -Name 'New Outlook' -PackageNames $OutlookNames -FoundPackages $outlook -UserSid $sid
+}
+
+if ($teams.Count -gt 0) {
+    Invoke-SpecialAppxRemoval -Name 'Teams' -PackageNames $TeamsNames -FoundPackages $teams -UserSid $sid
+}
 
 Write-Host 'Have a great rest of your day!'
 Write-Host ''
