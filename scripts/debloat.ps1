@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Continue'
+$ProgressPreference = 'SilentlyContinue'
 
 function Confirm-Action {
     param([string]$Prompt)
@@ -140,7 +141,7 @@ if ($outlookFound.Count -gt 0 -and (Confirm-Action 'Uninstall Outlook?')) {
     $outlookErrors = @()
     foreach ($pkg in $outlookFound) {
         try {
-            Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
+            Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop | Out-Null
         } catch {
             $outlookErrors += $_.Exception.Message
         }
@@ -170,7 +171,7 @@ if ($foundApps.Count -gt 0 -and (Confirm-Action 'Uninstall other apps?')) {
     Write-Host 'Uninstalling apps...' -NoNewline
     foreach ($pkg in $targets) {
         try {
-            Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
+            Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop | Out-Null
         } catch {
             $errors += "$($pkg.Name): $($_.Exception.Message)"
             Write-Host "`n  ✗ $($pkg.Name): $($_.Exception.Message)" -ForegroundColor Red
@@ -197,7 +198,7 @@ if ($teamsFound.Count -gt 0 -and (Confirm-Action 'Uninstall Teams?')) {
     $teamsErrors = @()
     foreach ($pkg in $teamsFound) {
         try {
-            Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
+            Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop | Out-Null
         } catch {
             $teamsErrors += $_.Exception.Message
             Write-Host "Uninstalling Teams: ✗ $($_.Exception.Message)" -ForegroundColor Red
