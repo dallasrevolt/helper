@@ -67,7 +67,14 @@ function Remove-OneDrive {
         } while ($after.Installed -and (Get-Date) -lt $deadline)
 
         if (-not $after.Installed) {
-            Write-Host "`rUninstalling OneDrive... ✓ Done." -ForegroundColor Green
+            try {
+                if (Test-Path -LiteralPath $before.Root) {
+                    Remove-Item -LiteralPath $before.Root -Recurse -Force -ErrorAction Stop
+                }
+                Write-Host "`rUninstalling OneDrive... ✓ Done." -ForegroundColor Green
+            } catch {
+                Write-Host "`rOneDrive: ✓ Uninstalled, but couldn't remove the remaining folder: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
         } else {
             Write-Host "`rOneDrive: ✗ Couldn't uninstall (exit code $($proc.ExitCode))." -ForegroundColor Red
         }
