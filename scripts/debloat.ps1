@@ -206,39 +206,43 @@ function Invoke-InteractiveWorker {
         Remove-Item -LiteralPath $runResult -Force -ErrorAction SilentlyContinue
 
         $powerShellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        if (-not (Test-Path -LiteralPath $powerShellExe)) { throw "PowerShell executable not found: $powerShellExe" }
-        foreach ($path in @($runWorker, $runPayload, (Split-Path -Parent $runResult))) {
-            if (-not (Test-Path -LiteralPath $path)) { throw "Required path does not exist: $path" }
+        if (-not (Test-Path -LiteralPath $powerShellExe)) {
+            throw "PowerShell executable not found: $powerShellExe"
         }
+
         $actionArgs = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -PayloadPath "{1}" -ResultPath "{2}"' -f $runWorker, $runPayload, $runResult
         $action = New-ScheduledTaskAction -Execute $powerShellExe -Argument $actionArgs
         $principal = New-ScheduledTaskPrincipal -UserId $interactiveUser -LogonType Interactive -RunLevel Limited
-
         $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds ($TimeoutSeconds + 30))
 
         Register-ScheduledTask -TaskName $runTask -Action $action -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
         Start-ScheduledTask -TaskName $runTask -ErrorAction Stop
 
         $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-        $taskCompleted = $false
+        $data = $null
+        $lastTaskInfo = $null
 
         while ((Get-Date) -lt $deadline) {
-            $taskInfo = Get-ScheduledTaskInfo -TaskName $runTask -ErrorAction SilentlyContinue
-            $task = Get-ScheduledTask -TaskName $runTask -ErrorAction SilentlyContinue
-
             if (Test-Path -LiteralPath $runResult) {
                 try {
-                    $data = Get-Content -LiteralPath $runResult -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-                    if ($null -ne $data -and $null -ne $data.Success) {
-                        $taskCompleted = $true
+                    $json = Get-Content -LiteralPath $runResult -Raw -ErrorAction Stop
+                    $candidate = $json | ConvertFrom-Json -ErrorAction Stop
+                    if ($null -ne $candidate -and $null -ne $candidate.Success) {
+                        $data = $candidate
                         break
                     }
-                } catch {}
+                }
+                catch {
+                    # The result file may still be being written. Retry briefly.
+                }
             }
 
-            if ($task -and $task.State -eq 'Ready' -and $taskInfo -and $taskInfo.LastRunTime -gt [datetime]::MinValue) {
+            $task = Get-ScheduledTask -TaskName $runTask -ErrorAction SilentlyContinue
+            $lastTaskInfo = Get-ScheduledTaskInfo -TaskName $runTask -ErrorAction SilentlyContinue
+
+            if ($task -and $task.State -eq 'Ready' -and $lastTaskInfo -and $lastTaskInfo.LastRunTime -gt [datetime]::MinValue) {
                 if (-not (Test-Path -LiteralPath $runResult)) {
-                    throw "The scheduled task ended without producing a result file. LastTaskResult=$($taskInfo.LastTaskResult)"
+                    throw "Worker task ended without a result file. LastTaskResult=$($lastTaskInfo.LastTaskResult)"
                 }
             }
 
@@ -246,18 +250,20 @@ function Invoke-InteractiveWorker {
             [Console]::Write("`r$frame")
             $lineLength = [Math]::Max($lineLength, $frame.Length)
             $spin = ($spin + 1) % $spinner.Count
-            Start-Sleep -Milliseconds 150
-        }
-
-        if (-not $taskCompleted) {
-            $taskInfo = Get-ScheduledTaskInfo -TaskName $runTask -ErrorAction SilentlyContinue
-            throw "Timed out or worker failed. LastTaskResult=$($taskInfo.LastTaskResult)"
+            Start-Sleep -Milliseconds 250
         }
 
         [Console]::Write("`r" + (' ' * $lineLength) + "`r")
+
+        if ($null -eq $data) {
+            $lastTaskInfo = Get-ScheduledTaskInfo -TaskName $runTask -ErrorAction SilentlyContinue
+            throw "Timed out waiting for a valid worker result. LastTaskResult=$($lastTaskInfo.LastTaskResult)"
+        }
+
         return $data
     }
     finally {
+        [Console]::Write("`r" + (' ' * $lineLength) + "`r")
         Unregister-ScheduledTask -TaskName $runTask -Confirm:$false -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $runPayload,$runResult,$runWorker -Force -ErrorAction SilentlyContinue
     }
