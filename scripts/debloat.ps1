@@ -56,7 +56,7 @@ function Remove-OneDrive {
         return
     }
 
-    Write-Host 'Uninstalling OneDrive...'
+    Write-Host 'Uninstalling OneDrive...' -NoNewline
     try {
         $proc = Start-Process -FilePath $setup -ArgumentList '/uninstall' -PassThru -Wait -ErrorAction Stop
         $deadline = (Get-Date).AddSeconds(45)
@@ -66,12 +66,12 @@ function Remove-OneDrive {
         } while ($after.Installed -and (Get-Date) -lt $deadline)
 
         if (-not $after.Installed) {
-            Write-Host 'OneDrive: ✓ Done.' -ForegroundColor Green
+            Write-Host "`rUninstalling OneDrive... ✓ Done." -ForegroundColor Green
         } else {
-            Write-Host "OneDrive: ✗ Couldn't uninstall (exit code $($proc.ExitCode))." -ForegroundColor Red
+            Write-Host "`rOneDrive: ✗ Couldn't uninstall (exit code $($proc.ExitCode))." -ForegroundColor Red
         }
     } catch {
-        Write-Host "OneDrive: ✗ $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "`rOneDrive: ✗ $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 
@@ -136,32 +136,44 @@ if ($oneDriveFound -and (Confirm-Action 'Uninstall OneDrive?')) {
 }
 
 if ($outlookFound.Count -gt 0 -and (Confirm-Action 'Uninstall Outlook?')) {
+    Write-Host 'Uninstalling...' -NoNewline
+    $outlookErrors = @()
     foreach ($pkg in $outlookFound) {
         try {
             Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
         } catch {
-            Write-Host "Outlook: ✗ $($_.Exception.Message)" -ForegroundColor Red
+            $outlookErrors += $_.Exception.Message
         }
     }
-    if (@(Get-AppxPackage | Where-Object { $_.Name -in $OutlookNames }).Count -eq 0) {
-        Write-Host 'Outlook: ✓ Done.' -ForegroundColor Green
+
+    $deadline = (Get-Date).AddSeconds(30)
+    do {
+        Start-Sleep -Milliseconds 500
+        $outlookRemaining = @(Get-AppxPackage | Where-Object { $_.Name -in $OutlookNames })
+    } while ($outlookRemaining.Count -gt 0 -and (Get-Date) -lt $deadline)
+
+    if ($outlookRemaining.Count -eq 0 -and $outlookErrors.Count -eq 0) {
+        Write-Host "`rUninstalling... ✓ Done." -ForegroundColor Green
     } else {
-        Write-Host "Outlook: ✗ Couldn't uninstall." -ForegroundColor Red
+        Write-Host "`rUninstalling... ✗ Couldn't uninstall." -ForegroundColor Red
+        foreach ($errorMessage in $outlookErrors) {
+            Write-Host "  $errorMessage" -ForegroundColor Red
+        }
     }
 }
 
 if ($foundApps.Count -gt 0 -and (Confirm-Action 'Uninstall other apps?')) {
     $wanted = @($foundApps | ForEach-Object { $_.Packages } | Select-Object -Unique)
-    $targets = @($installed | Where-Object { $_.Name -in $wanted })
+    $targets = @($installed | Where-Object { $_.Name -in $wanted } | Sort-Object PackageFullName -Unique)
     $errors = @()
 
-    Write-Host 'Uninstalling apps...'
+    Write-Host 'Uninstalling apps...' -NoNewline
     foreach ($pkg in $targets) {
         try {
             Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
         } catch {
             $errors += "$($pkg.Name): $($_.Exception.Message)"
-            Write-Host "  ✗ $($pkg.Name): $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "`n  ✗ $($pkg.Name): $($_.Exception.Message)" -ForegroundColor Red
         }
     }
 
@@ -172,24 +184,27 @@ if ($foundApps.Count -gt 0 -and (Confirm-Action 'Uninstall other apps?')) {
     } while ($remaining.Count -gt 0 -and (Get-Date) -lt $deadline)
 
     if ($remaining.Count -eq 0 -and $errors.Count -eq 0) {
-        Write-Host '✓ Done.' -ForegroundColor Green
+        Write-Host "`rUninstalling apps... ✓ Done." -ForegroundColor Green
     } else {
+        Write-Host "`rUninstalling apps... ✗ Some apps couldn't be removed." -ForegroundColor Red
         foreach ($pkg in $remaining) {
             Write-Host "  ✗ Still installed: $($pkg.Name)" -ForegroundColor Red
         }
-        Write-Host "✗ Some apps couldn't be removed." -ForegroundColor Red
     }
 }
 
 if ($teamsFound.Count -gt 0 -and (Confirm-Action 'Uninstall Teams?')) {
+    $teamsErrors = @()
     foreach ($pkg in $teamsFound) {
         try {
             Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
         } catch {
+            $teamsErrors += $_.Exception.Message
             Write-Host "Teams: ✗ $($_.Exception.Message)" -ForegroundColor Red
         }
     }
-    if (@(Get-AppxPackage | Where-Object { $_.Name -in $TeamsNames }).Count -eq 0) {
+
+    if (@(Get-AppxPackage | Where-Object { $_.Name -in $TeamsNames }).Count -eq 0 -and $teamsErrors.Count -eq 0) {
         Write-Host 'Teams: ✓ Done.' -ForegroundColor Green
     } else {
         Write-Host "Teams: ✗ Couldn't uninstall." -ForegroundColor Red
