@@ -1,504 +1,275 @@
 # Relaunch as administrator when needed
-$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     $scriptUrl = 'https://helper.dallasrevolt.workers.dev/debloat'
-
-    # Use Windows PowerShell 5.1 only
     $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    if (-not (Test-Path -LiteralPath $shell)) {
-        throw 'Windows PowerShell 5.1 was not found.'
-    }
-
-    $bootstrap = @"
-`$ErrorActionPreference = 'Stop'
-try {
-    `$response = Invoke-WebRequest -Uri '$scriptUrl' -UseBasicParsing -ErrorAction Stop
-    `$code = `$response.Content
-
-    if ([string]::IsNullOrWhiteSpace(`$code) -or `$code -match '(?is)^\s*(<!doctype html|<html|error code:\s*\d+|not found\b)') {
-        throw 'The endpoint did not return a valid PowerShell script.'
-    }
-
-    & ([ScriptBlock]::Create(`$code))
-}
-catch {
-    Write-Host "Failed to download or run the script: `$(`$_.Exception.Message)" -ForegroundColor Red
-    Write-Host 'Check the Cloudflare Worker route and GitHub file path.' -ForegroundColor Yellow
-}
-"@
-
-    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
-    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-EncodedCommand', $encodedCommand)
-    $terminal = Get-Command wt.exe -ErrorAction SilentlyContinue
-
-    try {
-        if ($terminal) {
-            Start-Process -FilePath $terminal.Source -Verb RunAs -ArgumentList (@('-w', 'new', $shell) + $arguments) -ErrorAction Stop
-        } else {
-            Start-Process -FilePath $shell -Verb RunAs -ArgumentList $arguments -ErrorAction Stop
-        }
-    }
-    catch {
-        Write-Host "Could not start the elevated console: $($_.Exception.Message)" -ForegroundColor Red
-    }
-
+    $bootstrap = "`$ErrorActionPreference='Stop';try{`$r=Invoke-WebRequest -Uri '$scriptUrl' -UseBasicParsing -ErrorAction Stop;`$c=`$r.Content;if([string]::IsNullOrWhiteSpace(`$c)-or `$c -match '(?is)^\s*(<!doctype html|<html|error code:\s*\d+|not found\b)'){throw 'Invalid script response'};& ([ScriptBlock]::Create(`$c))}catch{Write-Host `"Failed to download or run the script: `$(`$_.Exception.Message)`" -ForegroundColor Red}"
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
+    try { Start-Process -FilePath $shell -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-EncodedCommand',$encoded) -ErrorAction Stop } catch { Write-Host "Could not start elevated console: $($_.Exception.Message)" -ForegroundColor Red }
     return
 }
 
 Clear-Host
-$ProgressPreference = 'SilentlyContinue'
 $ErrorActionPreference = 'Stop'
-
-# --------------------------------------------------
-# Input and terminal progress helpers
-# --------------------------------------------------
+$ProgressPreference = 'SilentlyContinue'
 
 function Confirm-Action {
     param([string]$Message)
-
-    do {
-        $answer = (Read-Host $Message).Trim()
-    } while ($answer -notmatch '^[YyNn]$')
-
+    do { $answer = (Read-Host $Message).Trim() } while ($answer -notmatch '^[YyNn]$')
     return ($answer -match '^[Yy]$')
 }
 
-$script:ProgressLineLength = 0
-
-function Write-TerminalProgress {
-    param(
-        [string]$Activity,
-        [int]$Current,
-        [int]$Total,
-        [int]$Width = 16
-    )
-
-    if ($Total -lt 1) {
-        $Total = 1
-    }
-
-    $percent = [int][Math]::Floor(100 * $Current / $Total)
-    $percent = [Math]::Max(0, [Math]::Min(100, $percent))
-    $filled = [int][Math]::Floor($Width * $percent / 100)
-    $bar = ('█' * $filled) + ('░' * ($Width - $filled))
-    $line = '{0}:  {1} {2}%' -f $Activity, $bar, $percent
-
-    $padding = [Math]::Max(0, $script:ProgressLineLength - $line.Length)
-    [Console]::Write("`r" + $line + (' ' * $padding) + "`r")
-
-    $script:ProgressLineLength = [Math]::Max($script:ProgressLineLength, $line.Length)
-}
-
-function Complete-TerminalProgress {
-    param(
-        [string]$Activity,
-        [string]$Result,
-        [ConsoleColor]$Color = [ConsoleColor]::Green
-    )
-
-    $line = '{0}: {1}' -f $Activity, $Result
-    $padding = [Math]::Max(0, $script:ProgressLineLength - $line.Length)
-
-    Write-Host ("`r" + $line + (' ' * $padding)) -ForegroundColor $Color
-    $script:ProgressLineLength = 0
-}
-
-# --------------------------------------------------
-# Identify the interactive user
-# --------------------------------------------------
-
-$session = (Get-Process -Id $PID).SessionId
-$explorers = @(
-    Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" |
-        Where-Object { $_.SessionId -eq $session }
-)
-
-$sids = @(
+# Identify the interactive account by its Explorer process, not by SID-based app queries.
+$sessionId = (Get-Process -Id $PID).SessionId
+$explorers = @(Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" | Where-Object { $_.SessionId -eq $sessionId })
+$interactiveUsers = @(
     foreach ($explorer in $explorers) {
         try {
-            (Invoke-CimMethod -InputObject $explorer -MethodName GetOwnerSid -ErrorAction Stop).Sid
+            $owner = Invoke-CimMethod -InputObject $explorer -MethodName GetOwner -ErrorAction Stop
+            if ($owner.User -and $owner.Domain) { "$($owner.Domain)\$($owner.User)" }
         } catch {}
     }
-)
+) | Select-Object -Unique
 
-$sids = @($sids | Where-Object { $_ } | Select-Object -Unique)
-
-if ($sids.Count -ne 1) {
+if ($interactiveUsers.Count -ne 1) {
     Write-Host 'Could not identify the interactive user.' -ForegroundColor Red
     return
 }
+$interactiveUser = $interactiveUsers[0]
 
-$sid = $sids[0]
+# Worker runs detection, uninstallation AND verification in the interactive user's context.
+$workerPath = Join-Path $env:ProgramData 'DebloatInteractiveWorker.ps1'
+$payloadPath = Join-Path $env:ProgramData 'DebloatInteractivePayload.json'
+$resultPath = Join-Path $env:PUBLIC 'DebloatInteractiveResult.json'
+$taskName = 'DebloatInteractiveWorker'
 
-$profileInfo = Get-CimInstance Win32_UserProfile |
-    Where-Object { $_.SID -eq $sid } |
-    Select-Object -First 1
+$workerCode = @'
+param([string]$PayloadPath,[string]$ResultPath)
+$ErrorActionPreference = 'Stop'
+function Get-OneDriveState {
+    $root = Join-Path $env:LOCALAPPDATA 'Microsoft\OneDrive'
+    $exe = Join-Path $root 'OneDrive.exe'
+    $paths = @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')
+    $entries = @(Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match '^(Microsoft )?OneDrive$' })
+    [pscustomobject]@{ Root=$root; Exe=$exe; Entries=$entries; Installed=((Test-Path -LiteralPath $exe) -or $entries.Count -gt 0) }
+}
+function Find-OneDriveSetup($state) {
+    foreach ($entry in $state.Entries) {
+        $u = [string]$entry.UninstallString
+        if ($u -match '^\s*"([^"]+)"') { $candidate=$Matches[1] }
+        elseif ($u -match '^\s*(.+?\.exe)(?:\s|$)') { $candidate=$Matches[1].Trim('"') }
+        else { $candidate=$null }
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) { return $candidate }
+    }
+    if (Test-Path -LiteralPath $state.Root) {
+        $setup = Get-ChildItem -LiteralPath $state.Root -Filter 'OneDriveSetup.exe' -File -Recurse -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($setup) { return $setup.FullName }
+    }
+    return $null
+}
+$p = Get-Content -LiteralPath $PayloadPath -Raw | ConvertFrom-Json
+$result = $null
+try {
+    switch ($p.Mode) {
+        'Detect' {
+            $pkgs = @(Get-AppxPackage)
+            $od = Get-OneDriveState
+            $result = [pscustomobject]@{
+                Success = $true
+                Packages = @($pkgs | Select-Object Name,PackageFullName)
+                OneDriveInstalled = $od.Installed
+            }
+        }
+        'Appx' {
+            $wanted = @($p.PackageNames)
+            $errors = @()
+            foreach ($name in $wanted) {
+                $matching = @(Get-AppxPackage | Where-Object { $_.Name -eq $name })
+                foreach ($pkg in $matching) {
+                    try { Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop }
+                    catch { $errors += "$name`: $($_.Exception.Message)" }
+                }
+            }
+            $deadline = (Get-Date).AddSeconds(30)
+            do {
+                Start-Sleep -Milliseconds 500
+                $remaining = @(Get-AppxPackage | Where-Object { $_.Name -in $wanted })
+            } while ($remaining.Count -gt 0 -and (Get-Date) -lt $deadline)
+            $remainingNames = @($remaining | Select-Object -ExpandProperty Name -Unique)
+            $result = [pscustomobject]@{
+                Success = ($remainingNames.Count -eq 0 -and $errors.Count -eq 0)
+                Remaining = $remainingNames
+                Errors = $errors
+            }
+        }
+        'OneDrive' {
+            $before = Get-OneDriveState
+            if (-not $before.Installed) {
+                $result = [pscustomobject]@{ Success=$true; Message='Already absent' }
+                break
+            }
+            $setup = Find-OneDriveSetup $before
+            if (-not $setup) { throw 'OneDrive uninstaller was not found.' }
+            $proc = Start-Process -FilePath $setup -ArgumentList '/uninstall' -PassThru -Wait -ErrorAction Stop
+            $deadline = (Get-Date).AddSeconds(45)
+            do {
+                Start-Sleep -Seconds 1
+                $after = Get-OneDriveState
+            } while ($after.Installed -and (Get-Date) -lt $deadline)
+            $result = [pscustomobject]@{
+                Success = (-not $after.Installed -and $proc.ExitCode -eq 0)
+                ExitCode = $proc.ExitCode
+                StillInstalled = $after.Installed
+            }
+        }
+        default { throw "Unknown worker mode: $($p.Mode)" }
+    }
+} catch {
+    $result = [pscustomobject]@{ Success=$false; Error=$_.Exception.Message }
+}
+$result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+'@
 
-$profile = $profileInfo.LocalPath
+Set-Content -LiteralPath $workerPath -Value $workerCode -Encoding UTF8
 
-if (-not $profile) {
-    Write-Host 'Could not locate the interactive user profile.' -ForegroundColor Red
-    return
+function Invoke-InteractiveWorker {
+    param(
+        [Parameter(Mandatory=$true)][hashtable]$Payload,
+        [Parameter(Mandatory=$true)][string]$Activity,
+        [int]$TimeoutSeconds = 180
+    )
+    $spinner = @('/', '-', '\')
+    $spin = 0
+    $lineLength = 0
+    try {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $resultPath -Force -ErrorAction SilentlyContinue
+        $Payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $payloadPath -Encoding UTF8
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$workerPath`" -PayloadPath `"$payloadPath`" -ResultPath `"$resultPath`""
+        $principal = New-ScheduledTaskPrincipal -UserId $interactiveUser -LogonType Interactive -RunLevel Limited
+        Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
+        Start-ScheduledTask -TaskName $taskName
+        $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+        while (-not (Test-Path -LiteralPath $resultPath) -and (Get-Date) -lt $deadline) {
+            $frame = "$Activity... $($spinner[$spin])"
+            [Console]::Write("`r$frame")
+            $lineLength = [Math]::Max($lineLength,$frame.Length)
+            $spin = ($spin + 1) % $spinner.Count
+            Start-Sleep -Milliseconds 150
+        }
+        if (-not (Test-Path -LiteralPath $resultPath)) {
+            throw "Timed out after $TimeoutSeconds seconds."
+        }
+        $data = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+        [Console]::Write("`r" + (' ' * $lineLength) + "`r")
+        return $data
+    } finally {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $payloadPath,$resultPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
-# --------------------------------------------------
-# Application definitions
-# Special apps are deliberately excluded from $Apps
-# --------------------------------------------------
-
+# Application definitions retained from the original script.
 $Apps = [ordered]@{
     'Alarms' = @('Microsoft.WindowsAlarms')
-    'Bing' = @('Microsoft.BingNews', 'Microsoft.BingSearch', 'Microsoft.BingWeather')
+    'Bing' = @('Microsoft.BingNews','Microsoft.BingSearch','Microsoft.BingWeather')
     'Camera' = @('Microsoft.WindowsCamera')
-    'Clipchamp' = @('Clipchamp.Clipchamp', 'Clipchamp')
-    'Copilot' = @('Microsoft.Copilot', 'Microsoft.Windows.Copilot')
+    'Clipchamp' = @('Clipchamp.Clipchamp','Clipchamp')
+    'Copilot' = @('Microsoft.Copilot','Microsoft.Windows.Copilot')
     'Cross Device Experience Host' = @('MicrosoftWindows.CrossDevice')
-    'Dev Home' = @('Microsoft.Windows.DevHome', 'Microsoft.DevHome')
+    'Dev Home' = @('Microsoft.Windows.DevHome','Microsoft.DevHome')
     'Feedback Hub' = @('Microsoft.WindowsFeedbackHub')
     'Game Assist (Edge)' = @('Microsoft.Edge.GameAssist')
     'Game Bar' = @('Microsoft.XboxGamingOverlay')
-    'Gaming' = @('Microsoft.GamingApp', 'Microsoft.GamingServices')
+    'Gaming' = @('Microsoft.GamingApp','Microsoft.GamingServices')
     'Get Help' = @('Microsoft.GetHelp')
     'HP Easy Clean' = @('AD2F1837.HPEasyClean')
     'HP Support Desktop Utilities' = @('AD2F1837.HPDesktopSupportUtilities')
-    'HP System Information' = @('AD2F1837.HPSystemInformation', '9MTKLT3PWWN1')
+    'HP System Information' = @('AD2F1837.HPSystemInformation','9MTKLT3PWWN1')
     'Microsoft 365' = @('Microsoft.MicrosoftOfficeHub')
     'Music' = @('Microsoft.ZuneMusic')
     'Phone Link' = @('Microsoft.YourPhone')
-    'Power Automate' = @('Microsoft.PowerAutomate', 'Microsoft.PowerAutomateDesktop')
+    'Power Automate' = @('Microsoft.PowerAutomate','Microsoft.PowerAutomateDesktop')
     'Solitaire' = @('Microsoft.MicrosoftSolitaireCollection')
     'Sound Recorder' = @('Microsoft.WindowsSoundRecorder')
     'To Do' = @('Microsoft.Todos')
     'Video' = @('Microsoft.ZuneVideo')
-    'Xbox' = @(
-        'Microsoft.XboxApp',
-        'Microsoft.XboxGamingOverlay',
-        'Microsoft.XboxIdentityProvider',
-        'Microsoft.XboxSpeechToTextOverlay',
-        'Microsoft.Xbox.TCUI',
-        'Microsoft.XboxGameOverlay'
-    )
+    'Xbox' = @('Microsoft.XboxApp','Microsoft.XboxGamingOverlay','Microsoft.XboxIdentityProvider','Microsoft.XboxSpeechToTextOverlay','Microsoft.Xbox.TCUI','Microsoft.XboxGameOverlay')
 }
-
 $OutlookNames = @('Microsoft.OutlookForWindows')
-$TeamsNames = @('MicrosoftTeams', 'MSTeams', 'MicrosoftTeamsClassic')
+$TeamsNames = @('MicrosoftTeams','MSTeams','MicrosoftTeamsClassic')
 
-# --------------------------------------------------
-# Detect applications for the target user
-# --------------------------------------------------
-
+# Detection is performed by Get-AppxPackage in the interactive user's own context.
 try {
-    $packages = @(Get-AppxPackage -User $sid -ErrorAction Stop)
-}
-catch {
-    Write-Host "Could not query applications for the target user: $($_.Exception.Message)" -ForegroundColor Red
+    $inventory = Invoke-InteractiveWorker -Payload @{ Mode='Detect' } -Activity 'Checking for apps'
+} catch {
+    Write-Host " ✗ Could not check apps: $($_.Exception.Message)" -ForegroundColor Red
     return
 }
-
+if (-not $inventory.Success) {
+    Write-Host " ✗ Could not check apps: $($inventory.Error)" -ForegroundColor Red
+    return
+}
+$packages = @($inventory.Packages)
 $Targets = [ordered]@{}
-
 foreach ($appName in $Apps.Keys) {
     $found = @($packages | Where-Object { $_.Name -in $Apps[$appName] })
-
-    if ($found.Count -gt 0) {
-        $Targets[$appName] = $found
-    }
+    if ($found.Count -gt 0) { $Targets[$appName] = $found }
 }
-
 $outlook = @($packages | Where-Object { $_.Name -in $OutlookNames })
 $teams = @($packages | Where-Object { $_.Name -in $TeamsNames })
-
-# OneDrive detection for the target user's profile
-$oneDriveRoot = Join-Path $profile 'AppData\Local\Microsoft\OneDrive'
-$oneDriveExe = Join-Path $oneDriveRoot 'OneDrive.exe'
-
-$targetUninstallPath = "Registry::HKEY_USERS\$sid\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
-$targetUninstallWowPath = "Registry::HKEY_USERS\$sid\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
-
-$oneDriveEntries = @(
-    Get-ItemProperty -Path $targetUninstallPath, $targetUninstallWowPath -ErrorAction SilentlyContinue |
-        Where-Object { $_.DisplayName -match '^(Microsoft )?OneDrive$' }
-)
-
-$oneDriveDetected = (Test-Path -LiteralPath $oneDriveExe) -or ($oneDriveEntries.Count -gt 0)
-
-# --------------------------------------------------
-# Normal applications: alphabetical list and count
-# --------------------------------------------------
-
 $DetectedApps = @($Targets.Keys | Sort-Object)
 
-Write-Host ''
-Write-Host 'Checking for apps:' -NoNewline
+Write-Host " $($DetectedApps.Count) app(s) found." -ForegroundColor Green
 
-if ($DetectedApps.Count -eq 0) {
-    Write-Host ' ✗ No apps found!' -ForegroundColor Red
-}
-else {
-    Write-Host " ✓ $($DetectedApps.Count) app(s) found:" -ForegroundColor Green
-
-    foreach ($appName in $DetectedApps) {
-        Write-Host "- $appName"
-    }
-
-    if (Confirm-Action 'Uninstall apps? [Y]es / [N]o') {
-        $allPackages = @(
-            $Targets.Values |
-                ForEach-Object { $_ } |
-                Sort-Object -Property PackageFullName -Unique
-        )
-
-        $total = $allPackages.Count
-        $i = 0
-        $uninstallFailed = $false
-
-        foreach ($package in $allPackages) {
-            Write-TerminalProgress -Activity 'Uninstalling apps' -Current $i -Total $total
-        
-            try {
-                $previousProgressPreference = $ProgressPreference
-                $ProgressPreference = 'SilentlyContinue'
-            
-                Remove-AppxPackage -Package $package.PackageFullName -User $sid -ErrorAction Stop
-            }
-            catch {
-                $uninstallFailed = $true
-                Write-Host "`nFailed to uninstall $($package.Name): $($_.Exception.Message)" -ForegroundColor Red
-            }
-            finally {
-                $ProgressPreference = $previousProgressPreference
-            }
-        
-            $i++
-            Write-TerminalProgress -Activity 'Uninstalling apps' -Current $i -Total $total
-        }
-
-        if ($uninstallFailed) {
-            Complete-TerminalProgress -Activity 'Uninstalling apps' -Result '✗ Apps NOT uninstalled!' -Color Red
-        }
-        else {
-            Complete-TerminalProgress -Activity 'Uninstalling apps' -Result '✓ Done!'
-
-            # Verify only when the uninstall commands reported no errors
-            try {
-                $remaining = @(Get-AppxPackage -User $sid -ErrorAction Stop)
-                $notRemoved = @()
-                $verifyNames = @($Targets.Keys | Sort-Object)
-                $verifyTotal = $verifyNames.Count
-                $verifyIndex = 0
-
-                foreach ($appName in $verifyNames) {
-                    Write-TerminalProgress -Activity 'Verifying removal' -Current $verifyIndex -Total $verifyTotal
-                
-                    $left = @($remaining | Where-Object { $_.Name -in $Apps[$appName] })
-                
-                    if ($left.Count -gt 0) {
-                        $notRemoved += $appName
-                    }
-                
-                    $verifyIndex++
-                    Write-TerminalProgress -Activity 'Verifying removal' -Current $verifyIndex -Total $verifyTotal
-                }
-
-                if ($notRemoved.Count -gt 0) {
-                    Complete-TerminalProgress -Activity 'Verifying removal' -Result '✗ Verification error!' -Color Red
-
-                    foreach ($name in ($notRemoved | Select-Object -Unique)) {
-                        Write-Host "- Still installed: $name" -ForegroundColor Yellow
-                    }
-                }
-                else {
-                    Complete-TerminalProgress -Activity 'Verifying removal' -Result '✓ Done!'
-                }
-            }
-            catch {
-                Complete-TerminalProgress -Activity 'Verifying removal' -Result '✗ Verification error!' -Color Red
-                Write-Host $_.Exception.Message -ForegroundColor Yellow
-            }
-        }
-    }
-}
-
-# --------------------------------------------------
-# OneDrive: separate detection, removal and verification
-# --------------------------------------------------
-
-if ($oneDriveDetected) {
-    if (Confirm-Action 'OneDrive detected. Uninstall it? [Y]es / [N]o') {
-        $setupPath = $null
-
-        # Prefer the uninstaller registered for this user
-        foreach ($entry in $oneDriveEntries) {
-            $candidate = $null
-
-            if ($entry.UninstallString -match '^\s*"([^"]+)"') {
-                $candidate = $Matches[1]
-            }
-            elseif ($entry.UninstallString -match '^\s*(.+?\.exe)\b') {
-                $candidate = $Matches[1].Trim('"')
-            }
-
-            if ($candidate -and (Test-Path -LiteralPath $candidate)) {
-                $setupPath = $candidate
-                break
-            }
-        }
-
-        # Fallback: search the target user's OneDrive directory
-        if (-not $setupPath -and (Test-Path -LiteralPath $oneDriveRoot)) {
-            $setup = Get-ChildItem -LiteralPath $oneDriveRoot -Filter 'OneDriveSetup.exe' -File -Recurse -ErrorAction SilentlyContinue |
-                Sort-Object LastWriteTime -Descending |
-                Select-Object -First 1
-
-            if ($setup) {
-                $setupPath = $setup.FullName
-            }
-        }
-
-        if (-not $setupPath) {
-            Write-Host 'Uninstalling OneDrive: ✗ App NOT uninstalled! Uninstaller not found.' -ForegroundColor Red
-        }
-        else {
-            try {
-                # Start the uninstaller without blocking the terminal
-                $spinner = @('|', '/', '-', '\')
-                $spinnerIndex = 0
-
-                Write-Host 'Uninstalling OneDrive...' -NoNewline
-
-                $process = Start-Process -FilePath $setupPath -ArgumentList '/uninstall' -PassThru -ErrorAction Stop
-
-                # Show an activity spinner while the uninstaller runs
-                while (-not $process.HasExited) {
-                    Write-Host "`rUninstalling OneDrive... $($spinner[$spinnerIndex])" -NoNewline
-
-                    $spinnerIndex = ($spinnerIndex + 1) % $spinner.Count
-
-                    Start-Sleep -Milliseconds 150
-                    $process.Refresh()
-                }
-
-                $process.WaitForExit()
-
-                if ($process.ExitCode -ne 0) {
-                    Complete-TerminalProgress -Activity 'Uninstalling OneDrive' -Result "✗ App NOT uninstalled! Exit code: $($process.ExitCode)" -Color Red
-                }
-                else {
-                    Complete-TerminalProgress -Activity 'Uninstalling OneDrive' -Result '✓ Process finished!'
-
-                    # Verify the target user's executable and uninstall registration
-                    try {
-                        Write-TerminalProgress -Activity 'Verifying OneDrive removal' -Current 0 -Total 1
-
-                        Start-Sleep -Seconds 2
-
-                        $remainingOneDriveEntries = @(
-                            Get-ItemProperty -Path $targetUninstallPath, $targetUninstallWowPath -ErrorAction SilentlyContinue |
-                                Where-Object { $_.DisplayName -match '^(Microsoft )?OneDrive$' }
-                        )
-
-                        $oneDriveStillExists = (Test-Path -LiteralPath $oneDriveExe) -or ($remainingOneDriveEntries.Count -gt 0)
-
-                        Write-TerminalProgress -Activity 'Verifying OneDrive removal' -Current 1 -Total 1
-
-                        if ($oneDriveStillExists) {
-                            Complete-TerminalProgress -Activity 'Verifying OneDrive removal' -Result '✗ Verification error! OneDrive still detected.' -Color Red
-                        }
-                        else {
-                            Complete-TerminalProgress -Activity 'Verifying OneDrive removal' -Result '✓ Done!'
-                        }
-                    }
-                    catch {
-                        Complete-TerminalProgress -Activity 'Verifying OneDrive removal' -Result '✗ Verification error!' -Color Red
-                        Write-Host $_.Exception.Message -ForegroundColor Yellow
-                    }
-                }
-            }
-            catch {
-                Complete-TerminalProgress -Activity 'Uninstalling OneDrive' -Result '✗ App NOT uninstalled!' -Color Red
-                Write-Host $_.Exception.Message -ForegroundColor Yellow
-            }
-        }
-    }
-}
-
-# --------------------------------------------------
-# Outlook and Teams: separate Appx removal workflow
-# --------------------------------------------------
-
-function Invoke-SpecialAppxRemoval {
-    param(
-        [Parameter(Mandatory = $true)][string]$Name,
-        [Parameter(Mandatory = $true)][string[]]$PackageNames,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$FoundPackages,
-        [Parameter(Mandatory = $true)][string]$UserSid
-    )
-
-    if ($FoundPackages.Count -eq 0) {
-        return
-    }
-
-    if (-not (Confirm-Action "$Name detected. Uninstall it? [Y]es / [N]o")) {
-        return
-    }
-
-    $failed = $false
-    $total = $FoundPackages.Count
-    $i = 0
-
-    foreach ($package in $FoundPackages) {
-        try {
-            Remove-AppxPackage -Package $package.PackageFullName -User $UserSid -ErrorAction Stop
-        }
-        catch {
-            $failed = $true
-            Write-Host "`nFailed to uninstall $Name ($($package.Name)): $($_.Exception.Message)" -ForegroundColor Red
-        }
-
-        $i++
-        Write-TerminalProgress -Activity "Uninstalling $Name" -Current $i -Total $total
-    }
-
-    if ($failed) {
-        Complete-TerminalProgress -Activity "Uninstalling $Name" -Result '✗ App NOT uninstalled!' -Color Red
-        return
-    }
-
-    Complete-TerminalProgress -Activity "Uninstalling $Name" -Result '✓ Done!'
-
-    # Do not verify if an uninstall command reported an error
+# OneDrive: uninstall and verify within the same interactive worker process.
+if ($inventory.OneDriveInstalled -and (Confirm-Action 'Uninstall OneDrive? [Y]es / [N]o:')) {
     try {
-        Write-TerminalProgress -Activity "Verifying $Name removal" -Current 0 -Total 1
+        $r = Invoke-InteractiveWorker -Payload @{ Mode='OneDrive' } -Activity 'Uninstalling OneDrive'
+        if ($r.Success) { Write-Host 'Uninstalling OneDrive... ✓ Done.' -ForegroundColor Green }
+        else { Write-Host "Uninstalling OneDrive... ✗ Couldn't uninstall. $($r.Error)" -ForegroundColor Red }
+    } catch {
+        Write-Host "Uninstalling OneDrive... ✗ Couldn't uninstall. $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
 
-        $remaining = @(
-            Get-AppxPackage -User $UserSid -ErrorAction Stop |
-                Where-Object { $_.Name -in $PackageNames }
-        )
+# New Outlook: AppX removal plus verification in one worker process.
+if ($outlook.Count -gt 0 -and (Confirm-Action 'Uninstall Outlook? [Y]es / [N]o:')) {
+    try {
+        $r = Invoke-InteractiveWorker -Payload @{ Mode='Appx'; PackageNames=$OutlookNames } -Activity 'Uninstalling Outlook'
+        if ($r.Success) { Write-Host 'Uninstalling Outlook... ✓ Done.' -ForegroundColor Green }
+        else { Write-Host "Uninstalling Outlook... ✗ Couldn't uninstall." -ForegroundColor Red }
+    } catch {
+        Write-Host "Uninstalling Outlook... ✗ Couldn't uninstall. $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
 
-        Write-TerminalProgress -Activity "Verifying $Name removal" -Current 1 -Total 1
-
-        if ($remaining.Count -gt 0) {
-            Complete-TerminalProgress -Activity "Verifying $Name removal" -Result '✗ Verification error!' -Color Red
-        }
+# Remaining applications: preserve the original application list and confirm-before-removal flow.
+if ($DetectedApps.Count -gt 0 -and (Confirm-Action 'Uninstall other apps? [Y]es / [N]o:')) {
+    $namesToRemove = @($Targets.Keys | ForEach-Object { $Apps[$_] } | Select-Object -Unique)
+    try {
+        $r = Invoke-InteractiveWorker -Payload @{ Mode='Appx'; PackageNames=$namesToRemove } -Activity 'Uninstalling apps'
+        if ($r.Success) { Write-Host 'Uninstalling apps... ✓ Done.' -ForegroundColor Green }
         else {
-            Complete-TerminalProgress -Activity "Verifying $Name removal" -Result '✓ Done!'
+            Write-Host 'Uninstalling apps... ✗ Couldn''t uninstall.' -ForegroundColor Red
+            if ($r.Remaining) { Write-Host ("Still installed: " + ($r.Remaining -join ', ')) -ForegroundColor Yellow }
         }
-    }
-    catch {
-        Complete-TerminalProgress -Activity "Verifying $Name removal" -Result '✗ Verification error!' -Color Red
-        Write-Host $_.Exception.Message -ForegroundColor Yellow
+    } catch {
+        Write-Host "Uninstalling apps... ✗ Couldn't uninstall. $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 
-# Process special apps in the requested order
-if ($outlook.Count -gt 0) {
-    Invoke-SpecialAppxRemoval -Name 'New Outlook' -PackageNames $OutlookNames -FoundPackages $outlook -UserSid $sid
+# Teams: retain its separate prompt and verification.
+if ($teams.Count -gt 0 -and (Confirm-Action 'Uninstall Teams? [Y]es / [N]o:')) {
+    try {
+        $r = Invoke-InteractiveWorker -Payload @{ Mode='Appx'; PackageNames=$TeamsNames } -Activity 'Uninstalling Teams'
+        if ($r.Success) { Write-Host 'Uninstalling Teams... ✓ Done.' -ForegroundColor Green }
+        else { Write-Host 'Uninstalling Teams... ✗ Couldn''t uninstall.' -ForegroundColor Red }
+    } catch {
+        Write-Host "Uninstalling Teams... ✗ Couldn't uninstall. $($_.Exception.Message)" -ForegroundColor Red
+    }
 }
 
-if ($teams.Count -gt 0) {
-    Invoke-SpecialAppxRemoval -Name 'Teams' -PackageNames $TeamsNames -FoundPackages $teams -UserSid $sid
-}
-
+Remove-Item -LiteralPath $workerPath -Force -ErrorAction SilentlyContinue
 Write-Host 'Have a great rest of your day!'
 Write-Host ''
