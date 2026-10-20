@@ -1,11 +1,32 @@
+
 # Relaunch as administrator when needed
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
 if (-not $isAdmin) {
     $scriptUrl = 'https://helper.dallasrevolt.workers.dev/debloat'
-    $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $bootstrap = "`$ErrorActionPreference='Stop';try{`$r=Invoke-WebRequest -Uri '$scriptUrl' -UseBasicParsing -ErrorAction Stop;`$c=`$r.Content;if([string]::IsNullOrWhiteSpace(`$c)-or `$c -match '(?is)^\s*(<!doctype html|<html|error code:\s*\d+|not found\b)'){throw 'Invalid script response'};& ([ScriptBlock]::Create(`$c))}catch{Write-Host `"Failed to download or run the script: `$(`$_.Exception.Message)`" -ForegroundColor Red}"
+    $shell = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source
+
+    if (-not $shell) {
+        throw 'Windows Terminal (wt.exe) was not found.'
+    }
+
+    $bootstrap = "`$ErrorActionPreference='Stop';try{`$r=Invoke-WebRequest -Uri '$scriptUrl' -UseBasicParsing -ErrorAction Stop;`$c=`$r.Content;if([string]::IsNullOrWhiteSpace(`$c)-or `$r.StatusCode -ne 200 -or `$c -match '(?is)^\s*(<!doctype html|<html|error code:\s*\d+|not found\b)'){throw 'Invalid script response'};& ([ScriptBlock]::Create(`$c))}catch{Write-Host `"Failed to download or run the script: `$(`$_.Exception.Message)`" -ForegroundColor Red}"
+
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
-    try { Start-Process -FilePath $shell -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-EncodedCommand',$encoded) -ErrorAction Stop } catch { Write-Host "Could not start elevated console: $($_.Exception.Message)" -ForegroundColor Red }
+
+    try {
+        Start-Process -FilePath $shell -Verb RunAs -ArgumentList @(
+            '-w', 'new',
+            'powershell.exe',
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-NoExit',
+            '-EncodedCommand', $encoded
+        ) -ErrorAction Stop
+    } catch {
+        Write-Host "Could not start elevated console: $($_.Exception.Message)" -ForegroundColor Red
+    }
+
     return
 }
 
@@ -138,34 +159,70 @@ function Invoke-InteractiveWorker {
         [Parameter(Mandatory=$true)][string]$Activity,
         [int]$TimeoutSeconds = 180
     )
+
     $spinner = @('/', '-', '\')
     $spin = 0
     $lineLength = 0
+    $runId = [guid]::NewGuid().ToString('N')
+    $runTask = "DebloatWorker_$runId"
+    $runPayload = Join-Path $env:ProgramData "DebloatPayload_$runId.json"
+    $runResult = Join-Path $env:PUBLIC "DebloatResult_$runId.json"
+    $runWorker = Join-Path $env:ProgramData "DebloatWorker_$runId.ps1"
+
     try {
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $resultPath -Force -ErrorAction SilentlyContinue
-        $Payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $payloadPath -Encoding UTF8
-        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$workerPath`" -PayloadPath `"$payloadPath`" -ResultPath `"$resultPath`""
+        Copy-Item -LiteralPath $workerPath -Destination $runWorker -Force -ErrorAction Stop
+        $Payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $runPayload -Encoding UTF8 -ErrorAction Stop
+        Remove-Item -LiteralPath $runResult -Force -ErrorAction SilentlyContinue
+
+        $actionArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$runWorker`" -PayloadPath `"$runPayload`" -ResultPath `"$runResult`""
+        $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument $actionArgs
         $principal = New-ScheduledTaskPrincipal -UserId $interactiveUser -LogonType Interactive -RunLevel Limited
-        Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
-        Start-ScheduledTask -TaskName $taskName
+        $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds ($TimeoutSeconds + 30))
+
+        Register-ScheduledTask -TaskName $runTask -Action $action -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
+        Start-ScheduledTask -TaskName $runTask -ErrorAction Stop
+
         $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-        while (-not (Test-Path -LiteralPath $resultPath) -and (Get-Date) -lt $deadline) {
+        $taskCompleted = $false
+
+        while ((Get-Date) -lt $deadline) {
+            $taskInfo = Get-ScheduledTaskInfo -TaskName $runTask -ErrorAction SilentlyContinue
+            $task = Get-ScheduledTask -TaskName $runTask -ErrorAction SilentlyContinue
+
+            if (Test-Path -LiteralPath $runResult) {
+                try {
+                    $data = Get-Content -LiteralPath $runResult -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                    if ($null -ne $data -and $null -ne $data.Success) {
+                        $taskCompleted = $true
+                        break
+                    }
+                } catch {}
+            }
+
+            if ($task -and $task.State -eq 'Ready' -and $taskInfo -and $taskInfo.LastRunTime -gt [datetime]::MinValue) {
+                if (-not (Test-Path -LiteralPath $runResult)) {
+                    throw "The scheduled task ended without producing a result file. LastTaskResult=$($taskInfo.LastTaskResult)"
+                }
+            }
+
             $frame = "$Activity... $($spinner[$spin])"
             [Console]::Write("`r$frame")
-            $lineLength = [Math]::Max($lineLength,$frame.Length)
+            $lineLength = [Math]::Max($lineLength, $frame.Length)
             $spin = ($spin + 1) % $spinner.Count
             Start-Sleep -Milliseconds 150
         }
-        if (-not (Test-Path -LiteralPath $resultPath)) {
-            throw "Timed out after $TimeoutSeconds seconds."
+
+        if (-not $taskCompleted) {
+            $taskInfo = Get-ScheduledTaskInfo -TaskName $runTask -ErrorAction SilentlyContinue
+            throw "Timed out or worker failed. LastTaskResult=$($taskInfo.LastTaskResult)"
         }
-        $data = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+
         [Console]::Write("`r" + (' ' * $lineLength) + "`r")
         return $data
-    } finally {
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $payloadPath,$resultPath -Force -ErrorAction SilentlyContinue
+    }
+    finally {
+        Unregister-ScheduledTask -TaskName $runTask -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $runPayload,$runResult,$runWorker -Force -ErrorAction SilentlyContinue
     }
 }
 
