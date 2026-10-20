@@ -88,35 +88,47 @@ function Find-OneDriveSetup($state) {
     }
     return $null
 }
-$p = Get-Content -LiteralPath $PayloadPath -Raw | ConvertFrom-Json
+
 $result = $null
+
 try {
+    $p = Get-Content -LiteralPath $PayloadPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+
     switch ($p.Mode) {
         'Detect' {
             $pkgs = @(Get-AppxPackage)
             $od = Get-OneDriveState
             $result = [pscustomobject]@{
                 Success = $true
-                Packages = @($pkgs | Select-Object Name,PackageFullName)
+                Packages = @($pkgs | Select-Object Name, PackageFullName)
                 OneDriveInstalled = $od.Installed
             }
         }
         'Appx' {
             $wanted = @($p.PackageNames)
             $errors = @()
+
             foreach ($name in $wanted) {
                 $matching = @(Get-AppxPackage | Where-Object { $_.Name -eq $name })
+
                 foreach ($pkg in $matching) {
-                    try { Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop }
-                    catch { $errors += "$name`: $($_.Exception.Message)" }
+                    try {
+                        Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
+                    }
+                    catch {
+                        $errors += "$name`: $($_.Exception.Message)"
+                    }
                 }
             }
+
             $deadline = (Get-Date).AddSeconds(30)
             do {
                 Start-Sleep -Milliseconds 500
                 $remaining = @(Get-AppxPackage | Where-Object { $_.Name -in $wanted })
             } while ($remaining.Count -gt 0 -and (Get-Date) -lt $deadline)
+
             $remainingNames = @($remaining | Select-Object -ExpandProperty Name -Unique)
+
             $result = [pscustomobject]@{
                 Success = ($remainingNames.Count -eq 0 -and $errors.Count -eq 0)
                 Remaining = $remainingNames
@@ -125,30 +137,49 @@ try {
         }
         'OneDrive' {
             $before = Get-OneDriveState
+
             if (-not $before.Installed) {
-                $result = [pscustomobject]@{ Success=$true; Message='Already absent' }
-                break
+                $result = [pscustomobject]@{ Success = $true; Message = 'Already absent' }
             }
-            $setup = Find-OneDriveSetup $before
-            if (-not $setup) { throw 'OneDrive uninstaller was not found.' }
-            $proc = Start-Process -FilePath $setup -ArgumentList '/uninstall' -PassThru -Wait -ErrorAction Stop
-            $deadline = (Get-Date).AddSeconds(45)
-            do {
-                Start-Sleep -Seconds 1
-                $after = Get-OneDriveState
-            } while ($after.Installed -and (Get-Date) -lt $deadline)
-            $result = [pscustomobject]@{
-                Success = (-not $after.Installed -and $proc.ExitCode -eq 0)
-                ExitCode = $proc.ExitCode
-                StillInstalled = $after.Installed
+            else {
+                $setup = Find-OneDriveSetup $before
+                if (-not $setup) { throw 'OneDrive uninstaller was not found.' }
+
+                $proc = Start-Process -FilePath $setup -ArgumentList '/uninstall' -PassThru -Wait -ErrorAction Stop
+                $deadline = (Get-Date).AddSeconds(45)
+
+                do {
+                    Start-Sleep -Seconds 1
+                    $after = Get-OneDriveState
+                } while ($after.Installed -and (Get-Date) -lt $deadline)
+
+                $result = [pscustomobject]@{
+                    Success = (-not $after.Installed -and $proc.ExitCode -eq 0)
+                    ExitCode = $proc.ExitCode
+                    StillInstalled = $after.Installed
+                }
             }
         }
-        default { throw "Unknown worker mode: $($p.Mode)" }
+        default {
+            throw "Unknown worker mode: $($p.Mode)"
+        }
     }
-} catch {
-    $result = [pscustomobject]@{ Success=$false; Error=$_.Exception.Message }
 }
-$result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+catch {
+    $result = [pscustomobject]@{
+        Success = $false
+        Error = $_.Exception.ToString()
+    }
+}
+
+try {
+    $result | ConvertTo-Json -Depth 8 -ErrorAction Stop |
+        Set-Content -LiteralPath $ResultPath -Encoding UTF8 -ErrorAction Stop
+}
+catch {
+    [Console]::Error.WriteLine("Could not write worker result to '$ResultPath': $($_.Exception.ToString())")
+    exit 1
+}
 '@
 
 Set-Content -LiteralPath $workerPath -Value $workerCode -Encoding UTF8
@@ -174,9 +205,15 @@ function Invoke-InteractiveWorker {
         $Payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $runPayload -Encoding UTF8 -ErrorAction Stop
         Remove-Item -LiteralPath $runResult -Force -ErrorAction SilentlyContinue
 
-        $actionArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$runWorker`" -PayloadPath `"$runPayload`" -ResultPath `"$runResult`""
-        $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument $actionArgs
+        $powerShellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (-not (Test-Path -LiteralPath $powerShellExe)) { throw "PowerShell executable not found: $powerShellExe" }
+        foreach ($path in @($runWorker, $runPayload, (Split-Path -Parent $runResult))) {
+            if (-not (Test-Path -LiteralPath $path)) { throw "Required path does not exist: $path" }
+        }
+        $actionArgs = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -PayloadPath "{1}" -ResultPath "{2}"' -f $runWorker, $runPayload, $runResult
+        $action = New-ScheduledTaskAction -Execute $powerShellExe -Argument $actionArgs
         $principal = New-ScheduledTaskPrincipal -UserId $interactiveUser -LogonType Interactive -RunLevel Limited
+
         $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds ($TimeoutSeconds + 30))
 
         Register-ScheduledTask -TaskName $runTask -Action $action -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
