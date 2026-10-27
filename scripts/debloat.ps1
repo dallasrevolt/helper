@@ -1,6 +1,8 @@
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
+Clear-Host
+
 function Confirm-Action {
     param([string]$Prompt)
     while ($true) {
@@ -119,6 +121,7 @@ try {
     $installed = @(Get-AppxPackage -ErrorAction Stop)
 } catch {
     Write-Host "`n✗ Could not check apps: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host ''
     return
 }
 
@@ -136,6 +139,7 @@ $total = $foundApps.Count + [int]($outlookFound.Count -gt 0) + [int]($teamsFound
 if ($total -eq 0) {
     Write-Host ' ✓ No apps found.'
     Write-Host 'Have a great rest of your day!'
+    Write-Host ''
     return
 }
 
@@ -222,3 +226,4 @@ if ($foundApps.Count -gt 0 -and (Confirm-Action 'Uninstall other apps?')) {
 }
 
 Write-Host 'Have a great rest of your day!'
+Write-Host ''
