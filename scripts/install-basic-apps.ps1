@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Continue"
+$ErrorActionPreference = 'Continue'
 
 # Relaunch as administrator if needed.
 $isAdmin = ([Security.Principal.WindowsPrincipal]::new(
@@ -6,7 +6,7 @@ $isAdmin = ([Security.Principal.WindowsPrincipal]::new(
 )).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-    $url = "https://helper.diegolascano.dev/apps"
+    $url = 'https://helper.diegolascano.dev/apps'
 
     $shellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
 
@@ -28,7 +28,8 @@ try {
         throw 'The endpoint did not return a valid PowerShell script.'
     }
 
-    Clear-Host & ([ScriptBlock]::Create(`$code))
+    Clear-Host
+    & ([ScriptBlock]::Create(`$code))
 }
 catch {
     Write-Host "Failed to download or run the script: `$(`$_.Exception.Message)" -ForegroundColor Red
@@ -55,26 +56,27 @@ catch {
 Clear-Host
 
 $apps = @(
-    "Adobe.Acrobat.Reader.64-bit"
-    "AnyDesk.AnyDesk"
-    "Google.Chrome"
-    "Mozilla.Firefox.es-MX"
-    "Mozilla.Thunderbird.es-MX"
-    "ONLYOFFICE.DesktopEditors"
-    "Oracle.JavaRuntimeEnvironment"
-    "RARLab.WinRAR"
-    "VideoLAN.VLC"
-    "voidtools.Everything"
+    'Adobe.Acrobat.Reader.64-bit'
+    'AnyDesk.AnyDesk'
+    'Google.Chrome'
+    'Mozilla.Firefox.es-MX'
+    'Mozilla.Thunderbird.es-MX'
+    'ONLYOFFICE.DesktopEditors'
+    'Oracle.JavaRuntimeEnvironment'
+    'RARLab.WinRAR'
+    'VideoLAN.VLC'
+    'voidtools.Everything'
 )
 
 while ($true) {
-    $answer = (Read-Host "Install basic apps? [Y]es / [N]o").Trim()
+    $answer = (Read-Host 'Install basic apps? [Y]es / [N]o').Trim()
 
     if ($answer -match '^(y|yes)$') {
         break
     }
 
     if ($answer -match '^(n|no)$') {
+        Write-Host ''
         return
     }
 }
@@ -88,11 +90,24 @@ if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
 
 Write-Host "`nChecking WinGet source..." -NoNewline
 
-& winget.exe search --id Google.Chrome --exact --source winget --disable-interactivity *> $null
-$sourceExitCode = $LASTEXITCODE
+$checkPackages = {
+    $missing = @()
 
-if ($sourceExitCode -ne 0) {
-    Write-Host "`nRefreshing WinGet source..." -ForegroundColor Yellow
+    foreach ($app in $apps) {
+        & winget.exe show --id $app --exact --source winget --disable-interactivity *> $null
+
+        if ($LASTEXITCODE -ne 0) {
+            $missing += $app
+        }
+    }
+
+    return ,$missing
+}
+
+$missing = & $checkPackages
+
+if ($missing.Count -gt 0) {
+    Write-Host "`rRefreshing WinGet source..." -ForegroundColor Yellow
 
     try {
         Add-AppxPackage `
@@ -107,25 +122,27 @@ if ($sourceExitCode -ne 0) {
 
     & winget.exe source update --name winget --disable-interactivity *> $null
 
-    & winget.exe search --id Google.Chrome --exact --source winget --disable-interactivity *> $null
-    $sourceExitCode = $LASTEXITCODE
+    $missing = & $checkPackages
 }
 
-if ($sourceExitCode -ne 0) {
-    Write-Host "`r✗ WinGet source unavailable. Installation cancelled." `
-        -ForegroundColor Red
-    return
+if ($missing.Count -gt 0) {
+    Write-Host "`rSome packages could not be verified:" -ForegroundColor Yellow
+
+    foreach ($app in $missing) {
+        Write-Host "  - $app" -ForegroundColor Yellow
+    }
+}
+else {
+    Write-Host "`rChecking WinGet source... ✓ Ready.       " `
+        -ForegroundColor Green
 }
 
-Write-Host "`rChecking WinGet source... ✓ Ready.       " `
-    -ForegroundColor Green
+Write-Host ''
 
 $failed = @()
 $skipped = 0
 $frames = @('/', '-', '\', '|')
 $frame = 0
-
-Write-Host ""
 
 foreach ($app in $apps) {
     $listOutput = & winget list `
@@ -146,23 +163,23 @@ foreach ($app in $apps) {
 
     try {
         $arguments = @(
-            "install"
-            "--id"
+            'install'
+            '--id'
             $app
-            "--exact"
-            "--source"
-            "winget"
-            "--silent"
-            "--force"
-            "--scope"
-            "machine"
-            "--accept-package-agreements"
-            "--accept-source-agreements"
-            "--disable-interactivity"
+            '--exact'
+            '--source'
+            'winget'
+            '--silent'
+            '--force'
+            '--scope'
+            'machine'
+            '--accept-package-agreements'
+            '--accept-source-agreements'
+            '--disable-interactivity'
         )
 
         $process = Start-Process `
-            -FilePath "winget.exe" `
+            -FilePath 'winget.exe' `
             -ArgumentList $arguments `
             -RedirectStandardOutput $stdout `
             -RedirectStandardError $stderr `
@@ -202,14 +219,14 @@ foreach ($app in $apps) {
 if ($failed.Count -eq 0) {
     Write-Host "`rInstalling... ✓ Done!                 " `
         -ForegroundColor Green
-    Write-Host ""
+    Write-Host ''
 
     if ($skipped -gt 0) {
         Write-Host "$skipped app(s) already installed; skipped." `
             -ForegroundColor Gray
     }
 
-    Write-Host "Have a great rest of your day!" `
+    Write-Host 'Have a great rest of your day!' `
         -ForegroundColor Yellow
 }
 else {
