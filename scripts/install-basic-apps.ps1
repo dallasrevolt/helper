@@ -8,11 +8,13 @@ $isAdmin = ([Security.Principal.WindowsPrincipal]::new(
 if (-not $isAdmin) {
     $url = "https://helper.diegolascano.dev/apps"
 
-    $shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) {
-        "pwsh.exe"
-    } else {
-        "powershell.exe"
+    $shellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+
+    if (-not $shellCommand) {
+        $shellCommand = Get-Command powershell.exe -ErrorAction Stop
     }
+
+    $shell = $shellCommand.Source
 
     $command = @"
 `$ErrorActionPreference = 'Stop'
@@ -37,34 +39,11 @@ catch {
         [Text.Encoding]::Unicode.GetBytes($command)
     )
 
-    $terminal = Get-Command wt.exe -ErrorAction SilentlyContinue
-
     try {
-        if ($terminal) {
-            Start-Process -FilePath $terminal.Source `
-                -Verb RunAs `
-                -ArgumentList @(
-                    "new-tab"
-                    $shell
-                    "-NoProfile"
-                    "-ExecutionPolicy"
-                    "Bypass"
-                    "-EncodedCommand"
-                    $encoded
-                ) `
-                -ErrorAction Stop
-        } else {
-            Start-Process -FilePath $shell `
-                -Verb RunAs `
-                -ArgumentList @(
-                    "-NoProfile"
-                    "-ExecutionPolicy"
-                    "Bypass"
-                    "-EncodedCommand"
-                    $encoded
-                ) `
-                -ErrorAction Stop
-        }
+        Start-Process -FilePath $shell `
+            -Verb RunAs `
+            -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NoExit -EncodedCommand $encoded" `
+            -ErrorAction Stop
     }
     catch {
         Write-Host "✗ Elevation cancelled or failed." -ForegroundColor Red
