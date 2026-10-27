@@ -79,7 +79,6 @@ while ($true) {
     }
 
     if ($u -match '^[Qq]$') {
-        Clear-Host
         break
     }
 
