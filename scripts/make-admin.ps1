@@ -2,7 +2,7 @@
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-    $scriptUrl = 'https://helper.dallasrevolt.workers.dev/make-admin'
+    $scriptUrl = 'https://helper.diegolascano.dev/make-admin'
 
     $shellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
     if (-not $shellCommand) {
@@ -31,19 +31,16 @@ catch {
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
     $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-EncodedCommand', $encodedCommand)
 
-    $terminal = Get-Command wt.exe -ErrorAction SilentlyContinue
-
     try {
-        if ($terminal) {
-            Start-Process -FilePath $terminal.Source -Verb RunAs -ArgumentList (@('-w', 'new', $shell) + $arguments) -ErrorAction Stop
-        } else {
-            Start-Process -FilePath $shell -Verb RunAs -ArgumentList $arguments -ErrorAction Stop
-        }
-    }
-    catch {
-        Write-Host "Could not start the elevated console: $($_.Exception.Message)" -ForegroundColor Red
-    }
-
+    Start-Process -FilePath $shell `
+        -Verb RunAs `
+        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NoExit -EncodedCommand $encoded" `
+        -ErrorAction Stop
+}
+catch {
+    Write-Host "Could not start the elevated console: $($_.Exception.Message)" `
+        -ForegroundColor Red
+}
     return
 }
 
@@ -83,7 +80,7 @@ while ($true) {
 
     if ($u -match '^[Qq]$') {
         Clear-Host
-        exit
+        break
     }
 
     if ($u.Length -gt 30) {
