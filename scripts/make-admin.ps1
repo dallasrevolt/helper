@@ -28,19 +28,19 @@ catch {
 }
 "@
 
-    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
-    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-EncodedCommand', $encodedCommand)
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
 
     try {
     Start-Process -FilePath $shell `
         -Verb RunAs `
         -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NoExit -EncodedCommand $encoded" `
         -ErrorAction Stop
-}
-catch {
-    Write-Host "Could not start the elevated console: $($_.Exception.Message)" `
+    }
+    catch {
+        Write-Host "Could not start the elevated console: $($_.Exception.Message)" `
         -ForegroundColor Red
-}
+    }
+    
     return
 }
 
