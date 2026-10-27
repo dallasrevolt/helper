@@ -52,6 +52,8 @@ catch {
     return
 }
 
+Clear-Host
+
 $apps = @(
     "Adobe.Acrobat.Reader.64-bit"
     "AnyDesk.AnyDesk"
@@ -224,5 +226,4 @@ else {
     }
 }
 
-Write-Host ""
-
+Write-Host ''
