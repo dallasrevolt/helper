@@ -1,12 +1,48 @@
 $ErrorActionPreference = "Continue"
 
+
+# Relaunch as administrator if needed.
+$isAdmin = ([Security.Principal.WindowsPrincipal]::new(
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+
+if (-not $isAdmin) {
+    try {
+        $url = "https://helper.dallasrevolt.workers.dev/apps"
+        $command = "irm '$url' | iex"
+        $encoded = [Convert]::ToBase64String(
+            [Text.Encoding]::Unicode.GetBytes($command)
+        )
+
+        Start-Process -FilePath "wt.exe" `
+            -Verb RunAs `
+            -ArgumentList @(
+                "new-tab"
+                "powershell.exe"
+                "-NoProfile"
+                "-ExecutionPolicy"
+                "Bypass"
+                "-EncodedCommand"
+                $encoded
+            ) `
+            -ErrorAction Stop
+    }
+    catch {
+        Write-Host "✗ Elevation cancelled or failed." -ForegroundColor Red
+        Read-Host "Press Enter to return to prompt" | Out-Null
+    }
+
+    return
+}
+
 $apps = @(
     "Adobe.Acrobat.Reader.64-bit"
     "AnyDesk.AnyDesk"
     "Google.Chrome"
     "Mozilla.Firefox.es-MX"
     "Mozilla.Thunderbird.es-MX"
-    "ONLYOFICE.DesktopEditors"
+    "ONLYOFFICE.DesktopEditors"
     "Oracle.JavaRuntimeEnvironment"
     "RARLab.WinRAR"
     "VideoLAN.VLC"
@@ -32,6 +68,42 @@ if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
     Read-Host "Press Enter to return to prompt" | Out-Null
     return
 }
+
+
+Write-Host "`nChecking WinGet source..." -NoNewline
+
+& winget.exe search --id Google.Chrome --exact --source winget --disable-interactivity *> $null
+$sourceExitCode = $LASTEXITCODE
+
+if ($sourceExitCode -ne 0) {
+    Write-Host "`nRefreshing WinGet source..." -ForegroundColor Yellow
+
+    try {
+        Add-AppxPackage `
+            -RegisterByFamilyName `
+            -MainPackage Microsoft.Winget.Source_8wekyb3d8bbwe `
+            -ErrorAction Stop
+    }
+    catch {
+        Write-Host "Source registration: $($_.Exception.Message)" `
+            -ForegroundColor Yellow
+    }
+
+    & winget.exe source update --name winget --disable-interactivity *> $null
+
+    & winget.exe search --id Google.Chrome --exact --source winget --disable-interactivity *> $null
+    $sourceExitCode = $LASTEXITCODE
+}
+
+if ($sourceExitCode -ne 0) {
+    Write-Host "`r✗ WinGet source unavailable. Installation cancelled." `
+        -ForegroundColor Red
+    Read-Host "Press Enter to return to prompt" | Out-Null
+    return
+}
+
+Write-Host "`rChecking WinGet source... ✓ Ready.       " `
+    -ForegroundColor Green
 
 $failed = @()
 $skipped = 0
