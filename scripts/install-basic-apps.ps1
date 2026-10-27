@@ -43,6 +43,7 @@ foreach ($app in $apps) {
     $listOutput = & winget list `
         --id $app `
         --exact `
+        --source winget `
         --accept-source-agreements `
         --disable-interactivity 2>&1 | Out-String
 
@@ -61,6 +62,8 @@ foreach ($app in $apps) {
             "--id"
             $app
             "--exact"
+            "--source"
+            "winget"
             "--silent"
             "--force"
             "--scope"
