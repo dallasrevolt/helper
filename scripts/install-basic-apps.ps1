@@ -6,6 +6,7 @@ $apps = @(
     "Google.Chrome"
     "Mozilla.Firefox.es-MX"
     "Mozilla.Thunderbird.es-MX"
+    "ONLYOFICE.DesktopEditors"
     "Oracle.JavaRuntimeEnvironment"
     "RARLab.WinRAR"
     "VideoLAN.VLC"
