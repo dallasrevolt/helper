@@ -28,7 +28,7 @@ try {
         throw 'The endpoint did not return a valid PowerShell script.'
     }
 
-    & ([ScriptBlock]::Create(`$code))
+    Clear-Host & ([ScriptBlock]::Create(`$code))
 }
 catch {
     Write-Host "Failed to download or run the script: `$(`$_.Exception.Message)" -ForegroundColor Red
