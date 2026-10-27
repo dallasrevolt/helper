@@ -1,36 +1,73 @@
 $ErrorActionPreference = "Continue"
 
-
 # Relaunch as administrator if needed.
 $isAdmin = ([Security.Principal.WindowsPrincipal]::new(
     [Security.Principal.WindowsIdentity]::GetCurrent()
 )).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
-
 if (-not $isAdmin) {
-    try {
-        $url = "https://helper.dallasrevolt.workers.dev/apps"
-        $command = "irm '$url' | iex"
-        $encoded = [Convert]::ToBase64String(
-            [Text.Encoding]::Unicode.GetBytes($command)
-        )
+    $url = "https://helper.diegolascano.dev/apps"
 
-        Start-Process -FilePath "wt.exe" `
-            -Verb RunAs `
-            -ArgumentList @(
-                "new-tab"
-                "powershell.exe"
-                "-NoProfile"
-                "-ExecutionPolicy"
-                "Bypass"
-                "-EncodedCommand"
-                $encoded
-            ) `
-            -ErrorAction Stop
+    $shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) {
+        "pwsh.exe"
+    } else {
+        "powershell.exe"
+    }
+
+    $command = @"
+`$ErrorActionPreference = 'Stop'
+
+try {
+    `$response = Invoke-WebRequest -Uri '$url' -UseBasicParsing -ErrorAction Stop
+    `$code = `$response.Content
+
+    if ([string]::IsNullOrWhiteSpace(`$code) -or
+        `$code -match '(?is)^\s*(<!doctype html|<html|error code:\s*\d+|not found\b)') {
+        throw 'The endpoint did not return a valid PowerShell script.'
+    }
+
+    & ([ScriptBlock]::Create(`$code))
+}
+catch {
+    Write-Host "Failed to download or run the script: `$(`$_.Exception.Message)" -ForegroundColor Red
+}
+"@
+
+    $encoded = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes($command)
+    )
+
+    $terminal = Get-Command wt.exe -ErrorAction SilentlyContinue
+
+    try {
+        if ($terminal) {
+            Start-Process -FilePath $terminal.Source `
+                -Verb RunAs `
+                -ArgumentList @(
+                    "new-tab"
+                    $shell
+                    "-NoProfile"
+                    "-ExecutionPolicy"
+                    "Bypass"
+                    "-EncodedCommand"
+                    $encoded
+                ) `
+                -ErrorAction Stop
+        } else {
+            Start-Process -FilePath $shell `
+                -Verb RunAs `
+                -ArgumentList @(
+                    "-NoProfile"
+                    "-ExecutionPolicy"
+                    "Bypass"
+                    "-EncodedCommand"
+                    $encoded
+                ) `
+                -ErrorAction Stop
+        }
     }
     catch {
         Write-Host "✗ Elevation cancelled or failed." -ForegroundColor Red
-        Read-Host "Press Enter to return to prompt" | Out-Null
     }
 
     return
@@ -64,8 +101,6 @@ while ($true) {
 if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
     Write-Host "`n✗ Couldn't install all apps: WinGet not found." `
         -ForegroundColor Red
-
-    Read-Host "Press Enter to return to prompt" | Out-Null
     return
 }
 
@@ -98,7 +133,6 @@ if ($sourceExitCode -ne 0) {
 if ($sourceExitCode -ne 0) {
     Write-Host "`r✗ WinGet source unavailable. Installation cancelled." `
         -ForegroundColor Red
-    Read-Host "Press Enter to return to prompt" | Out-Null
     return
 }
 
@@ -212,4 +246,4 @@ else {
 }
 
 Write-Host ""
-Read-Host "Press Enter to return to prompt" | Out-Null
+
