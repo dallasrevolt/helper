@@ -100,6 +100,7 @@ $Apps = @(
     @{ Name = 'HP Support Desktop Utilities'; Packages = @('AD2F1837.HPDesktopSupportUtilities') }
     @{ Name = 'HP System Information'; Packages = @('AD2F1837.HPSystemInformation','9MTKLT3PWWN1') }
     @{ Name = 'Microsoft 365'; Packages = @('Microsoft.MicrosoftOfficeHub') }
+    @{ Name = 'Microsoft Start Experiences'; Packages = @('Microsoft.StartExperiencesApp') }
     @{ Name = 'Music'; Packages = @('Microsoft.ZuneMusic') }
     @{ Name = 'Phone Link'; Packages = @('Microsoft.YourPhone') }
     @{ Name = 'Power Automate'; Packages = @('Microsoft.PowerAutomate','Microsoft.PowerAutomateDesktop') }
@@ -107,7 +108,7 @@ $Apps = @(
     @{ Name = 'Sound Recorder'; Packages = @('Microsoft.WindowsSoundRecorder') }
     @{ Name = 'To Do'; Packages = @('Microsoft.Todos') }
     @{ Name = 'Video'; Packages = @('Microsoft.ZuneVideo') }
-    @{ Name = 'Xbox'; Packages = @('Microsoft.XboxApp','Microsoft.XboxGamingOverlay','Microsoft.XboxIdentityProvider','Microsoft.XboxSpeechToTextOverlay','Microsoft.XboxGameOverlay') }
+    @{ Name = 'Xbox'; Packages = @('Microsoft.XboxApp','Microsoft.XboxGamingOverlay','Microsoft.XboxIdentityProvider','Microsoft.XboxSpeechToTextOverlay','Microsoft.XboxGameOverlay','Microsoft.Xbox.TCUI') }
 )
 
 $OutlookNames = @('Microsoft.OutlookForWindows')
