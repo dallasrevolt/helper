@@ -50,7 +50,7 @@ Write-Host ''
         [Text.Encoding]::Unicode.GetBytes($command)
     )
 
-    $arguments = "-w new new-tab --title `"Basic Apps`" `"$shell`" -NoProfile -ExecutionPolicy Bypass -NoExit -EncodedCommand $encoded"
+    $arguments = "-w new new-tab --title `"Basic apps installation`" `"$shell`" -NoProfile -ExecutionPolicy Bypass -NoExit -EncodedCommand $encoded"
 
     try {
         Start-Process -FilePath $wt.Source `
@@ -80,7 +80,7 @@ $apps = @(
 )
 
 while ($true) {
-    $answer = (Read-Host 'Install basic apps? [Y]es / [N]o').Trim()
+    $answer = (Read-Host 'Install basic apps? [Y]es / [Q]uit').Trim()
 
     if ($answer -match '^(?i:y|yes)$') {
         break
