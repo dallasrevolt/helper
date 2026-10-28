@@ -71,12 +71,37 @@ function Remove-OneDrive {
         if (-not $after.Installed) {
             try {
                 if (Test-Path -LiteralPath $before.Root) {
-                    Remove-Item -LiteralPath $before.Root -Recurse -Force -ErrorAction Stop
+                    try {
+                        Remove-Item -LiteralPath $before.Root -Recurse -Force -ErrorAction Stop
+                    } catch {
+                        $root = $before.Root
+                        $command = "`$ErrorActionPreference = 'Stop'; try { Remove-Item -LiteralPath '$($root.Replace("'", "''"))' -Recurse -Force -ErrorAction Stop; if (Test-Path -LiteralPath '$($root.Replace("'", "''"))') { exit 1 }; exit 0 } catch { exit 1 }"
+
+                        $elevatedProc = Start-Process -FilePath 'powershell.exe' `
+                            -Verb RunAs `
+                            -ArgumentList @(
+                                '-NoProfile',
+                                '-ExecutionPolicy', 'Bypass',
+                                '-Command', $command
+                            ) `
+                            -Wait `
+                            -PassThru `
+                            -ErrorAction Stop
+
+                        if ($elevatedProc.ExitCode -ne 0) {
+                            throw 'The elevated removal process failed.'
+                        }
+
+                        if (Test-Path -LiteralPath $root) {
+                            throw 'The folder still exists after the elevated removal attempt.'
+                        }
+                    }
                 }
+
                 Write-Host "`rUninstalling OneDrive... ✓ Done." -ForegroundColor Green
             } catch {
                 Write-Host "`rOneDrive: ✓ Uninstalled, but couldn't remove the remaining folder: $($_.Exception.Message)" -ForegroundColor Yellow
-            }
+            } 
         } else {
             Write-Host "`rOneDrive: ✗ Couldn't uninstall (exit code $($proc.ExitCode))." -ForegroundColor Red
         }
