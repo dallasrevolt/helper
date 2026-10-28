@@ -9,6 +9,7 @@ while ($true) {
     if ($answer -match '^(?i:y|yes)$') { break }
     if ($answer -match '^(?i:q|quit)$') { 
         Write-Host 'Have a great rest of your day!' -ForegroundColor Yellow
+        Write-Host ''
         return
     }
 
