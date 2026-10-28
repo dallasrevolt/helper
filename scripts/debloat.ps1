@@ -3,6 +3,18 @@ $ProgressPreference = 'SilentlyContinue'
 
 Clear-Host
 
+while ($true) {
+    $answer = (Read-Host 'Check for installed apps? [Y]es / [Q]uit').Trim()
+
+    if ($answer -match '^(?i:y|yes)$') { break }
+    if ($answer -match '^(?i:q|quit)$') { 
+        Write-Host 'Have a great rest of your day!' -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host 'Please enter Y or Q.' -ForegroundColor Yellow
+}
+
 function Confirm-Action {
     param([string]$Prompt)
     while ($true) {
@@ -250,5 +262,5 @@ if ($foundApps.Count -gt 0 -and (Confirm-Action 'Uninstall other apps?')) {
     }
 }
 
-Write-Host 'Have a great rest of your day!'
+Write-Host 'Have a great rest of your day!' -ForegroundColor Yellow
 Write-Host ''
