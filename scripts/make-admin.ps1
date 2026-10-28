@@ -106,6 +106,8 @@ while ($true) {
     }
 
     if ($u -match '^[Qq]$') {
+        Write-Host 'Have a great rest of your day!' -ForegroundColor Yellow
+        Write-Host ''
         break
     }
 
@@ -207,4 +209,5 @@ while ($true) {
     }
 }
 
+Write-Host 'Have a great rest of your day!' -ForegroundColor Yellow
 Write-Host ''
