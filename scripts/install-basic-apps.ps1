@@ -16,6 +16,14 @@ if (-not $isAdmin) {
 
     $shell = $shellCommand.Source
 
+    $wt = Get-Command wt.exe -ErrorAction SilentlyContinue
+
+    if (-not $wt) {
+        Write-Host 'Windows Terminal not found.' -ForegroundColor Red
+        Write-Host ''
+        return
+    }
+
     $command = @"
 `$ErrorActionPreference = 'Stop'
 
@@ -34,19 +42,22 @@ try {
 catch {
     Write-Host "Failed to download or run the script: `$(`$_.Exception.Message)" -ForegroundColor Red
 }
+
+Write-Host ''
 "@
 
     $encoded = [Convert]::ToBase64String(
         [Text.Encoding]::Unicode.GetBytes($command)
     )
 
+    $arguments = "-w new new-tab --title `"Basic Apps`" `"$shell`" -NoProfile -ExecutionPolicy Bypass -NoExit -EncodedCommand $encoded"
+
     try {
-        Start-Process -FilePath $shell `
+        Start-Process -FilePath $wt.Source `
             -Verb RunAs `
-            -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NoExit -EncodedCommand $encoded" `
+            -ArgumentList $arguments `
             -ErrorAction Stop
-    }
-    catch {
+    } catch {
         Write-Host "✗ Elevation cancelled or failed." -ForegroundColor Red
     }
 
@@ -71,11 +82,11 @@ $apps = @(
 while ($true) {
     $answer = (Read-Host 'Install basic apps? [Y]es / [N]o').Trim()
 
-    if ($answer -match '^(y|yes)$') {
+    if ($answer -match '^(?i:y|yes)$') {
         break
     }
 
-    if ($answer -match '^(n|no)$') {
+    if ($answer -match '^(?i:q|quit)$') {
         Write-Host ''
         return
     }
@@ -86,7 +97,6 @@ if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
         -ForegroundColor Red
     return
 }
-
 
 Write-Host "`nChecking WinGet source..." -NoNewline
 
