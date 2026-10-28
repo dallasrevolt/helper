@@ -42,7 +42,7 @@ catch {
         $wtArgs = @(
             'new-tab'
             '--title'
-            'Make Admin'
+            'Give administrator privileges'
             $shell
             '-NoProfile'
             '-ExecutionPolicy'
