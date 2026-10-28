@@ -1,8 +1,16 @@
-# Relaunch as administrator when needed
-$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+# Relaunch in Windows Terminal as administrator when needed
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator
+)
 
 if (-not $isAdmin) {
     $scriptUrl = 'https://helper.diegolascano.dev/admin'
+
+    $terminal = Get-Command wt.exe -ErrorAction SilentlyContinue
+    if (-not $terminal) {
+        Write-Host 'Windows Terminal was not found.' -ForegroundColor Red
+        return
+    }
 
     $shellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
     if (-not $shellCommand) {
@@ -31,16 +39,35 @@ catch {
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
 
     try {
-    Start-Process -FilePath $shell `
-        -Verb RunAs `
-        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NoExit -EncodedCommand $encoded" `
-        -ErrorAction Stop
-    }
-    catch {
-        Write-Host "Could not start the elevated console: $($_.Exception.Message)" `
-        -ForegroundColor Red
-    }
+        $wtArgs = @(
+            'new-tab'
+            '--title'
+            'Make Admin'
+            $shell
+            '-NoProfile'
+            '-ExecutionPolicy'
+            'Bypass'
+            '-NoExit'
+            '-EncodedCommand'
+            $encoded
+        )
+
+        $argumentLine = $wtArgs | ForEach-Object {
+            if ($_ -match '\s') {
+                '"' + $_.Replace('"', '\"') + '"'
+            } else {
+                $_
+            }
+        }
     
+        Start-Process -FilePath $terminal.Source `
+            -Verb RunAs `
+            -ArgumentList ($argumentLine -join ' ') `
+            -ErrorAction Stop
+    } catch {
+        Write-Host "Could not start the elevated terminal: $($_.Exception.Message)" -ForegroundColor Red
+    }
+
     return
 }
 
