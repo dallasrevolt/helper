@@ -149,14 +149,6 @@ else {
         -ForegroundColor Green
 }
 
-if ($missing.Count -gt 0) {
-    $failed += @(
-        $missing | ForEach-Object {
-            "$_ (package unavailable in WinGet)"
-        }
-    )
-}
-
 Write-Host ''
 
 $skipped = 0
