@@ -53,12 +53,10 @@ try {
 
     Set-Content -LiteralPath `$tempFile -Value `$code -Encoding UTF8 -ErrorAction Stop
 
-    `$process = Start-Process -FilePath '$escapedShell' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', `$tempFile) -Wait -PassThru -ErrorAction Stop
-
-    `$scriptExitCode = `$process.ExitCode
-
-    if (`$scriptExitCode -ne 0) {
-        Write-Host "Script finished with exit code: `$scriptExitCode" -ForegroundColor Yellow
+    try {
+        & `$tempFile
+    } catch {
+        Write-Host "Script execution failed: `$(`$_.Exception.Message)" -ForegroundColor Red
     }
 } catch {
     Write-Host "Failed to download or run the script: `$(`$_.Exception.Message)" -ForegroundColor Red
