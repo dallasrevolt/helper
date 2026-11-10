@@ -241,7 +241,7 @@ Write-Host "Method   : $EncryptionMethod"
 Write-Host ''
 
 while ($true) {
-    $answer = (Read-Host 'Proceed with BitLocker configuration?').Trim()
+    $answer = (Read-Host 'Proceed with BitLocker configuration? [Y]es / [Q]uit').Trim()
 
     if ($answer -match '^(?i:y|yes)$') { break }
     if ($answer -match '^(?i:q|quit)$') { 
