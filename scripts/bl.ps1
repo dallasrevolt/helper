@@ -224,7 +224,11 @@ Write-Host ''
 
 $confirmation = Read-Host 'Proceed with BitLocker configuration? [Y]es / [N]o'
 
-if ($confirmation -notmatch '^[Yy]$') {
+do {
+    $confirmation = Read-Host 'Proceed with BitLocker configuration? [Y]es / [N]o'
+} while ($confirmation -notmatch '^(Y|YES|N|NO)$')
+
+if ($confirmation -match '^(N|NO)$') {
     Write-Host ''
     Write-Host 'Operation cancelled.' -ForegroundColor Yellow
     Write-Host ''
