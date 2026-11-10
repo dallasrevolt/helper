@@ -88,23 +88,63 @@ function Remove-OneDrive {
                         Remove-Item -LiteralPath $before.Root -Recurse -Force -ErrorAction Stop
                     } catch {
                         $root = $before.Root
-                        $command = "`$ErrorActionPreference = 'Stop'; try { Remove-Item -LiteralPath '$($root.Replace("'", "''"))' -Recurse -Force -ErrorAction Stop; if (Test-Path -LiteralPath '$($root.Replace("'", "''"))') { exit 1 }; exit 0 } catch { exit 1 }"
+                        $errorFile = Join-Path $env:TEMP 'OneDrive-cleanup-error.log'
+                    
+                        $escapedRoot = $root.Replace("'", "''")
+                        $escapedErrorFile = $errorFile.Replace("'", "''")
+                    
+                        $cleanupScript = @"
+                    `$ErrorActionPreference = 'Stop'
+                    `$root = '$escapedRoot'
+                    `$errorFile = '$escapedErrorFile'
+                    
+                    try {
+                        if (Test-Path -LiteralPath `$root) {
+                            Remove-Item -LiteralPath `$root -Recurse -Force -ErrorAction Stop
+                        }
+                    
+                        if (Test-Path -LiteralPath `$root) {
+                            throw 'The folder still exists after removal.'
+                        }
+                    
+                        exit 0
+                    }
+                    catch {
+                        `$_.Exception.Message | Set-Content -LiteralPath `$errorFile
+                        exit 1
+                    }
+"@
 
+                        $encodedCommand = [Convert]::ToBase64String(
+                            [Text.Encoding]::Unicode.GetBytes($cleanupScript)
+                        )
+                    
+                        if (Test-Path -LiteralPath $errorFile) {
+                            Remove-Item -LiteralPath $errorFile -Force
+                        }
+                    
                         $elevatedProc = Start-Process -FilePath 'powershell.exe' `
                             -Verb RunAs `
                             -ArgumentList @(
                                 '-NoProfile',
                                 '-ExecutionPolicy', 'Bypass',
-                                '-Command', $command
+                                '-EncodedCommand', $encodedCommand
                             ) `
                             -Wait `
                             -PassThru `
                             -ErrorAction Stop
-
+                    
                         if ($elevatedProc.ExitCode -ne 0) {
-                            throw 'The elevated removal process failed.'
+                            $cleanupError = 'Unknown error.'
+                    
+                            if (Test-Path -LiteralPath $errorFile) {
+                                $cleanupError = Get-Content -LiteralPath $errorFile -Raw
+                                Remove-Item -LiteralPath $errorFile -Force
+                            }
+                    
+                            throw "Elevated folder removal failed: $cleanupError"
                         }
-
+                    
                         if (Test-Path -LiteralPath $root) {
                             throw 'The folder still exists after the elevated removal attempt.'
                         }
