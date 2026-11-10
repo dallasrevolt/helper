@@ -31,16 +31,15 @@ if (-not $isAdmin) {
         return
     }
 
-    $shellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+    $shellCommand = Get-Command powershell.exe -ErrorAction SilentlyContinue
     if (-not $shellCommand) {
-        $shellCommand = Get-Command powershell.exe -ErrorAction Stop
+        $shellCommand = Get-Command pwsh.exe -ErrorAction Stop
     }
     $shell = $shellCommand.Source
 
-    
-$escapedShell = $shell.Replace("'", "''")
+    $escapedShell = $shell.Replace("'", "''")
 
-$bootstrap = @"
+    $bootstrap = @"
 `$ErrorActionPreference = 'Stop'
 `$tempFile = Join-Path `$env:TEMP ('BitLocker-Deploy-' + [guid]::NewGuid().ToString() + '.ps1')
 
@@ -54,10 +53,7 @@ try {
 
     Set-Content -LiteralPath `$tempFile -Value `$code -Encoding UTF8 -ErrorAction Stop
 
-    `$process = Start-Process -FilePath '$escapedShell' `
-    -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', `$tempFile) `
-    -Wait `
-    -PassThru
+    `$process = Start-Process -FilePath '$escapedShell' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', `$tempFile) -Wait -PassThru -ErrorAction Stop
 
     `$scriptExitCode = `$process.ExitCode
 
