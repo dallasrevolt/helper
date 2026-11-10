@@ -37,8 +37,13 @@ if (-not $isAdmin) {
     }
     $shell = $shellCommand.Source
 
-    $bootstrap = @"
+    
+$escapedShell = $shell.Replace("'", "''")
+
+$bootstrap = @"
 `$ErrorActionPreference = 'Stop'
+`$tempFile = Join-Path `$env:TEMP ('BitLocker-Deploy-' + [guid]::NewGuid().ToString() + '.ps1')
+
 try {
     `$response = Invoke-WebRequest -Uri '$scriptUrl' -UseBasicParsing -ErrorAction Stop
     `$code = `$response.Content
@@ -47,11 +52,30 @@ try {
         throw 'The endpoint did not return a valid PowerShell script.'
     }
 
-    & ([ScriptBlock]::Create(`$code))
-}
-catch {
+    Set-Content -LiteralPath `$tempFile -Value `$code -Encoding UTF8 -ErrorAction Stop
+
+    & '$escapedShell' -NoProfile -ExecutionPolicy Bypass -File `$tempFile
+    `$scriptExitCode = `$LASTEXITCODE
+
+    if (`$scriptExitCode -ne 0) {
+        Write-Host "Script finished with exit code: `$scriptExitCode" -ForegroundColor Yellow
+    }
+} catch {
     Write-Host "Failed to download or run the script: `$(`$_.Exception.Message)" -ForegroundColor Red
     Write-Host 'Check the Cloudflare Worker route and GitHub file path.' -ForegroundColor Yellow
+} finally {
+    if (Test-Path -LiteralPath `$tempFile) {
+        Remove-Item -LiteralPath `$tempFile -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Host ''
+    Write-Host 'Press any key to close this window...' -ForegroundColor Cyan
+
+    try {
+        `$null = `$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+    } catch {
+        Read-Host 'Press Enter to close this window' | Out-Null
+    }
 }
 "@
 
@@ -83,8 +107,7 @@ catch {
             -Verb RunAs `
             -ArgumentList ($argumentLine -join ' ') `
             -ErrorAction Stop
-    }
-    catch {
+    } catch {
         Write-Host "Could not start the elevated terminal: $($_.Exception.Message)" -ForegroundColor Red
     }
 
@@ -114,8 +137,7 @@ function Initialize-Logging {
         if (-not [System.Diagnostics.EventLog]::SourceExists($LogSource)) {
             New-EventLog -LogName Application -Source $LogSource -ErrorAction Stop
         }
-    }
-    catch {
+    } catch {
         # Continue without Event Viewer logging if the event source cannot be created.
     }
 
@@ -124,8 +146,7 @@ function Initialize-Logging {
         if (-not (Test-Path $folder)) {
             New-Item -Path $folder -ItemType Directory -Force | Out-Null
         }
-    }
-    catch {}
+    } catch {}
 }
 
 function Write-DeployLog {
@@ -148,8 +169,7 @@ function Write-DeployLog {
 
     try {
         Write-EventLog -LogName Application -Source $LogSource -EventId $Id -EntryType $Type -Message $Message -ErrorAction Stop
-    }
-    catch {}
+    } catch {}
 }
 
 function Stop-Deployment {
@@ -222,17 +242,17 @@ Write-Host "Volume   : $MountPoint"
 Write-Host "Method   : $EncryptionMethod"
 Write-Host ''
 
-$confirmation = Read-Host 'Proceed with BitLocker configuration? [Y]es / [N]o'
+while ($true) {
+    $answer = (Read-Host 'Proceed with BitLocker configuration?').Trim()
 
-do {
-    $confirmation = Read-Host 'Proceed with BitLocker configuration? [Y]es / [N]o'
-} while ($confirmation -notmatch '^(Y|YES|N|NO)$')
+    if ($answer -match '^(?i:y|yes)$') { break }
+    if ($answer -match '^(?i:q|quit)$') { 
+        Write-Host 'Have a great rest of your day!' -ForegroundColor Yellow
+        Write-Host ''
+        return
+    }
 
-if ($confirmation -match '^(N|NO)$') {
-    Write-Host ''
-    Write-Host 'Operation cancelled.' -ForegroundColor Yellow
-    Write-Host ''
-    return
+    Write-Host 'Please enter Y or Q.' -ForegroundColor Yellow
 }
 
 Write-Host ''
@@ -262,8 +282,7 @@ try {
             Initialize-Tpm -ErrorAction Stop | Out-Null
             Start-Sleep -Seconds 2
             $tpm = Get-Tpm -ErrorAction Stop
-        }
-        catch {
+        } catch {
             Stop-Deployment -Code $ExitCodes.TPMNotReady -EventId 1023 -Message "Unable to prepare the TPM without clearing it. Error: $($_.Exception.Message)"
         }
 
@@ -348,14 +367,12 @@ try {
         try {
             Backup-RecoveryProtectorsToAD -Volume $volume
             Write-DeployLog -Id 1070 -Type Information -Message 'Recovery Password backup command completed successfully.'
-        }
-        catch {
+        } catch {
             # If encryption was just started and the backup failed, suspend
             # protection when possible to reduce the risk of lockout until AD is fixed.
             try {
                 Suspend-BitLocker -MountPoint $MountPoint -RebootCount 0 -ErrorAction SilentlyContinue | Out-Null
-            }
-            catch {}
+            } catch {}
 
             Stop-Deployment -Code $ExitCodes.ADBckupFailed -EventId 1071 -Message "Recovery Password backup to AD DS failed. Protection was suspended when possible. Error: $($_.Exception.Message)"
         }
@@ -424,8 +441,7 @@ try {
     Write-Host '==============================================' -ForegroundColor Green
 
     exit $ExitCodes.Success
-}
-catch {
+} catch {
     $message = "Unhandled BitLocker error: $($_.Exception.Message)"
     Write-DeployLog -Id 1999 -Type Error -Message $message
     exit $ExitCodes.UnexpectedError
