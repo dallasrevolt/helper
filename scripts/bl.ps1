@@ -1,25 +1,4 @@
 #requires -Version 5.1
-#requires -RunAsAdministrator
-
-<#
-.SYNOPSIS
-    Activa o normaliza BitLocker en el volumen del sistema de forma idempotente.
-
-.DESCRIPTION
-    - Valida TPM sin limpiarlo automaticamente.
-    - Valida pertenencia al dominio y disponibilidad de un DC.
-    - Conserva configuraciones BitLocker existentes.
-    - Garantiza que exista un Recovery Password protector.
-    - Intenta respaldar el Recovery Password en Active Directory.
-    - Garantiza que exista un protector basado en TPM.
-    - Inicia BitLocker solo cuando las precondiciones se cumplen.
-    - Si BitLocker esta suspendido, reanuda la proteccion.
-    - Registra eventos y un log de texto local.
-
-.NOTES
-    Para produccion se recomienda complementar este script con una GPO de BitLocker
-    que obligue a almacenar la informacion de recuperacion en AD DS.
-#>
 
 [CmdletBinding()]
 param(
@@ -28,14 +7,91 @@ param(
     [ValidateSet('XtsAes128','XtsAes256')]
     [string]$EncryptionMethod = 'XtsAes256',
 
-    # Para equipos recien instalados por MDT se puede cambiar a $true.
-    # Para equipos que ya han estado en uso, Full Disk ($false) es mas seguro.
+    # Use $true for newly deployed devices, such as those provisioned through MDT.
+    # For devices already in use, Full Disk encryption ($false) is safer.
     [bool]$UsedSpaceOnly = $false,
 
-    # Si es $true, no se inicia un cifrado nuevo si el equipo no esta en dominio
-    # o no se puede localizar un controlador de dominio.
+    # When $true, new encryption will not start unless the device is domain-joined
+    # and a domain controller is reachable.
     [bool]$RequireADBackup = $true
 )
+
+
+# Elevate when needed
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator
+)
+
+if (-not $isAdmin) {
+    $scriptUrl = 'https://helper.diegolascano.dev/bl'
+
+    $terminal = Get-Command wt.exe -ErrorAction SilentlyContinue
+    if (-not $terminal) {
+        Write-Host 'Windows Terminal was not found.' -ForegroundColor Red
+        return
+    }
+
+    $shellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+    if (-not $shellCommand) {
+        $shellCommand = Get-Command powershell.exe -ErrorAction Stop
+    }
+    $shell = $shellCommand.Source
+
+    $bootstrap = @"
+`$ErrorActionPreference = 'Stop'
+try {
+    `$response = Invoke-WebRequest -Uri '$scriptUrl' -UseBasicParsing -ErrorAction Stop
+    `$code = `$response.Content
+
+    if ([string]::IsNullOrWhiteSpace(`$code) -or `$code -match '(?is)^\s*(<!doctype html|<html|error code:\s*\d+|not found\b)') {
+        throw 'The endpoint did not return a valid PowerShell script.'
+    }
+
+    & ([ScriptBlock]::Create(`$code))
+}
+catch {
+    Write-Host "Failed to download or run the script: `$(`$_.Exception.Message)" -ForegroundColor Red
+    Write-Host 'Check the Cloudflare Worker route and GitHub file path.' -ForegroundColor Yellow
+}
+"@
+
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
+
+    try {
+        $wtArgs = @(
+            'new-tab'
+            '--title'
+            'BitLocker Deployment'
+            $shell
+            '-NoProfile'
+            '-ExecutionPolicy'
+            'Bypass'
+            '-NoExit'
+            '-EncodedCommand'
+            $encoded
+        )
+
+        $argumentLine = $wtArgs | ForEach-Object {
+            if ($_ -match '\s') {
+                '"' + $_.Replace('"', '\"') + '"'
+            } else {
+                $_
+            }
+        }
+
+        Start-Process -FilePath $terminal.Source `
+            -Verb RunAs `
+            -ArgumentList ($argumentLine -join ' ') `
+            -ErrorAction Stop
+    }
+    catch {
+        Write-Host "Could not start the elevated terminal: $($_.Exception.Message)" -ForegroundColor Red
+    }
+
+    return
+}
+
+Clear-Host
 
 $ErrorActionPreference = 'Stop'
 $LogSource = 'BitLocker-Deploy'
@@ -43,7 +99,6 @@ $LogFile   = Join-Path $env:WINDIR 'Temp\BitLocker-Deploy.log'
 
 $ExitCodes = @{
     Success             = 0
-    NotAdministrator    = 10
     NoTPM               = 20
     TPMDisabled         = 21
     TPMNotReady         = 22
@@ -61,7 +116,7 @@ function Initialize-Logging {
         }
     }
     catch {
-        # El log de archivo y consola continuan aunque no se pueda crear el origen.
+        # Continue without Event Viewer logging if the event source cannot be created.
     }
 
     try {
@@ -81,7 +136,13 @@ function Write-DeployLog {
     )
 
     $line = '{0:yyyy-MM-dd HH:mm:ss} [{1}] [{2}] {3}' -f (Get-Date), $Type, $Id, $Message
-    Write-Host $line
+    $foregroundColor = switch ($Type) {
+        'Information' { 'Cyan' }
+        'Warning'     { 'Yellow' }
+        'Error'       { 'Red' }
+    }
+
+    Write-Host $line -ForegroundColor $foregroundColor
 
     try { Add-Content -Path $LogFile -Value $line -Encoding UTF8 } catch {}
 
@@ -100,12 +161,6 @@ function Stop-Deployment {
 
     Write-DeployLog -Id $EventId -Type Error -Message $Message
     exit $Code
-}
-
-function Test-IsAdministrator {
-    $identity  = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
 function Get-BitLockerState {
@@ -149,39 +204,55 @@ function Backup-RecoveryProtectorsToAD {
 
     $recoveryProtectors = Get-RecoveryProtectors -Volume $Volume
     if ($recoveryProtectors.Count -eq 0) {
-        throw 'No existe ningun protector RecoveryPassword para respaldar en Active Directory.'
+        throw 'No Recovery Password protector exists to back up to Active Directory.'
     }
 
     foreach ($protector in $recoveryProtectors) {
-        Write-DeployLog -Id 1200 -Type Information -Message "Respaldando Recovery Password en AD DS. KeyProtectorId: $($protector.KeyProtectorId)"
+        Write-DeployLog -Id 1200 -Type Information -Message "Backing up Recovery Password to AD DS. KeyProtectorId: $($protector.KeyProtectorId)"
         Backup-BitLockerKeyProtector -MountPoint $MountPoint -KeyProtectorId $protector.KeyProtectorId -ErrorAction Stop | Out-Null
     }
 }
 
+# Confirm execution
+Write-Host '==============================================' -ForegroundColor Cyan
+Write-Host ' BITLOCKER - DEPLOYMENT' -ForegroundColor Cyan
+Write-Host '==============================================' -ForegroundColor Cyan
+Write-Host "Computer : $env:COMPUTERNAME"
+Write-Host "Volume   : $MountPoint"
+Write-Host "Method   : $EncryptionMethod"
+Write-Host ''
+
+$confirmation = Read-Host 'Proceed with BitLocker configuration? [Y]es / [N]o'
+
+if ($confirmation -notmatch '^[Yy]$') {
+    Write-Host ''
+    Write-Host 'Operation cancelled.' -ForegroundColor Yellow
+    Write-Host ''
+    return
+}
+
+Write-Host ''
+
 Initialize-Logging
 
 try {
-    Write-DeployLog -Id 1000 -Type Information -Message "Inicio de validacion BitLocker en $env:COMPUTERNAME. Volumen: $MountPoint"
-
-    if (-not (Test-IsAdministrator)) {
-        Stop-Deployment -Code $ExitCodes.NotAdministrator -EventId 1010 -Message 'El script debe ejecutarse con privilegios de administrador.'
-    }
+    Write-DeployLog -Id 1000 -Type Information -Message "Starting BitLocker validation on $env:COMPUTERNAME. Volume: $MountPoint"
 
     # -------------------------------------------------------------------------
-    # 1. TPM
+    # 1. TPM validation
     # -------------------------------------------------------------------------
     $tpm = Get-Tpm -ErrorAction Stop
 
     if (-not $tpm.TpmPresent) {
-        Stop-Deployment -Code $ExitCodes.NoTPM -EventId 1020 -Message 'No se detecto TPM. Revisar BIOS/UEFI (Intel PTT / AMD fTPM / TPM discreto).'
+        Stop-Deployment -Code $ExitCodes.NoTPM -EventId 1020 -Message 'No TPM detected. Check BIOS/UEFI settings (Intel PTT / AMD fTPM / discrete TPM).'
     }
 
     if (-not $tpm.TpmEnabled -or -not $tpm.TpmActivated) {
-        Stop-Deployment -Code $ExitCodes.TPMDisabled -EventId 1021 -Message 'TPM presente pero no habilitado/activado. Debe habilitarse en BIOS/UEFI.'
+        Stop-Deployment -Code $ExitCodes.TPMDisabled -EventId 1021 -Message 'TPM detected but not enabled or activated. Enable it in BIOS/UEFI.'
     }
 
     if (-not $tpm.TpmReady) {
-        Write-DeployLog -Id 1022 -Type Warning -Message 'TPM presente pero no preparado. Se intentara Initialize-Tpm sin permitir limpieza automatica del TPM.'
+        Write-DeployLog -Id 1022 -Type Warning -Message 'TPM detected but not ready. Attempting Initialize-Tpm without allowing automatic TPM clearing.'
 
         try {
             Initialize-Tpm -ErrorAction Stop | Out-Null
@@ -189,48 +260,48 @@ try {
             $tpm = Get-Tpm -ErrorAction Stop
         }
         catch {
-            Stop-Deployment -Code $ExitCodes.TPMNotReady -EventId 1023 -Message "No fue posible preparar el TPM sin limpiarlo. Error: $($_.Exception.Message)"
+            Stop-Deployment -Code $ExitCodes.TPMNotReady -EventId 1023 -Message "Unable to prepare the TPM without clearing it. Error: $($_.Exception.Message)"
         }
 
         if (-not $tpm.TpmReady) {
-            Stop-Deployment -Code $ExitCodes.TPMNotReady -EventId 1024 -Message 'TPM continua sin estar preparado. No se realizara ninguna accion destructiva ni se limpiara automaticamente.'
+            Stop-Deployment -Code $ExitCodes.TPMNotReady -EventId 1024 -Message 'TPM is still not ready. No destructive actions or automatic TPM clearing will be performed.'
         }
     }
 
-    Write-DeployLog -Id 1025 -Type Information -Message 'TPM presente, habilitado y preparado.'
+    Write-DeployLog -Id 1025 -Type Information -Message 'TPM detected, enabled and ready.'
 
     # -------------------------------------------------------------------------
-    # 2. Dominio / controlador de dominio
+    # 2. Domain and domain controller availability
     # -------------------------------------------------------------------------
     $domainState = Test-DomainAvailability
 
     if ($RequireADBackup) {
         if (-not $domainState.PartOfDomain) {
-            Stop-Deployment -Code $ExitCodes.NotDomainJoined -EventId 1030 -Message 'El equipo no pertenece a un dominio. RequireADBackup=True: no se iniciara un cifrado nuevo.'
+            Stop-Deployment -Code $ExitCodes.NotDomainJoined -EventId 1030 -Message 'The computer is not domain-joined. RequireADBackup=True: new encryption will not start.'
         }
 
         if (-not $domainState.DCReachable) {
-            Stop-Deployment -Code $ExitCodes.NoDomainController -EventId 1031 -Message "El equipo pertenece a $($domainState.Domain), pero no se pudo localizar un controlador de dominio. No se iniciara un cifrado nuevo."
+            Stop-Deployment -Code $ExitCodes.NoDomainController -EventId 1031 -Message "The computer belongs to $($domainState.Domain), but no domain controller could be located. New encryption will not start."
         }
 
-        Write-DeployLog -Id 1032 -Type Information -Message "Dominio disponible: $($domainState.Domain)."
+        Write-DeployLog -Id 1032 -Type Information -Message "Domain available: $($domainState.Domain)."
     }
 
     # -------------------------------------------------------------------------
-    # 3. Estado actual de BitLocker
+    # 3. Current BitLocker status
     # -------------------------------------------------------------------------
     $volume = Get-BitLockerState
-    Write-DeployLog -Id 1040 -Type Information -Message "Estado inicial: VolumeStatus=$($volume.VolumeStatus); ProtectionStatus=$($volume.ProtectionStatus); EncryptionPercentage=$($volume.EncryptionPercentage)%"
+    Write-DeployLog -Id 1040 -Type Information -Message "Initial status: VolumeStatus=$($volume.VolumeStatus); ProtectionStatus=$($volume.ProtectionStatus); EncryptionPercentage=$($volume.EncryptionPercentage)%"
 
     $wasFullyDecrypted = ($volume.VolumeStatus -eq 'FullyDecrypted')
 
     # -------------------------------------------------------------------------
-    # 4. Si esta totalmente descifrado, iniciar BitLocker con Recovery Password.
-    #    Primero se valida dominio/DC; despues se inicia cifrado y se respalda
-    #    inmediatamente el protector en AD DS.
+    # 4. Enable BitLocker if the volume is fully decrypted.
+    #    Validate domain/DC availability first, then start encryption and
+    #    immediately back up the recovery protector to AD DS.
     # -------------------------------------------------------------------------
     if ($wasFullyDecrypted) {
-        Write-DeployLog -Id 1050 -Type Information -Message "BitLocker no esta habilitado. Iniciando cifrado $EncryptionMethod. UsedSpaceOnly=$UsedSpaceOnly"
+        Write-DeployLog -Id 1050 -Type Information -Message "BitLocker is not enabled. Starting $EncryptionMethod encryption. UsedSpaceOnly=$UsedSpaceOnly"
 
         $enableParams = @{
             MountPoint                = $MountPoint
@@ -250,12 +321,12 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # 5. Garantizar Recovery Password protector
+    # 5. Ensure a Recovery Password protector exists.
     # -------------------------------------------------------------------------
     $recoveryProtectors = Get-RecoveryProtectors -Volume $volume
 
     if ($recoveryProtectors.Count -eq 0) {
-        Write-DeployLog -Id 1060 -Type Warning -Message 'No existe Recovery Password protector. Se agregara uno.'
+        Write-DeployLog -Id 1060 -Type Warning -Message 'No Recovery Password protector exists. One will be added.'
         Add-BitLockerKeyProtector -MountPoint $MountPoint -RecoveryPasswordProtector -ErrorAction Stop | Out-Null
         Start-Sleep -Seconds 1
         $volume = Get-BitLockerState
@@ -263,40 +334,40 @@ try {
     }
 
     if ($recoveryProtectors.Count -eq 0) {
-        throw 'No fue posible crear un Recovery Password protector.'
+        throw 'Unable to create a Recovery Password protector.'
     }
 
     # -------------------------------------------------------------------------
-    # 6. Respaldar Recovery Password en AD DS
+    # 6. Back up a Recovery Password protectors to AD DS
     # -------------------------------------------------------------------------
     if ($RequireADBackup) {
         try {
             Backup-RecoveryProtectorsToAD -Volume $volume
-            Write-DeployLog -Id 1070 -Type Information -Message 'Comando de respaldo de Recovery Password en AD DS completado correctamente.'
+            Write-DeployLog -Id 1070 -Type Information -Message 'Recovery Password backup command completed successfully.'
         }
         catch {
-            # Si el cifrado se acaba de iniciar y no se pudo respaldar, se suspende
-            # la proteccion para reducir el riesgo de bloqueo hasta corregir AD.
+            # If encryption was just started and the backup failed, suspend
+            # protection when possible to reduce the risk of lockout until AD is fixed.
             try {
                 Suspend-BitLocker -MountPoint $MountPoint -RebootCount 0 -ErrorAction SilentlyContinue | Out-Null
             }
             catch {}
 
-            Stop-Deployment -Code $ExitCodes.ADBckupFailed -EventId 1071 -Message "Fallo el respaldo de Recovery Password en AD DS. La proteccion se dejo suspendida cuando fue posible. Error: $($_.Exception.Message)"
+            Stop-Deployment -Code $ExitCodes.ADBckupFailed -EventId 1071 -Message "Recovery Password backup to AD DS failed. Protection was suspended when possible. Error: $($_.Exception.Message)"
         }
     }
     else {
-        Write-DeployLog -Id 1072 -Type Warning -Message 'RequireADBackup=False. El script no exigira respaldo de Recovery Password en AD DS.'
+        Write-DeployLog -Id 1072 -Type Warning -Message 'RequireADBackup=False. The script will not require a Recovery Password backup in AD DS.'
     }
 
     # -------------------------------------------------------------------------
-    # 7. Garantizar protector TPM sin alterar configuraciones TPM+PIN existentes
+    # 7. Ensure a TPM protector exists without modifying existing TPM+PIN configurations
     # -------------------------------------------------------------------------
     $volume = Get-BitLockerState
     $tpmProtectors = Get-TpmProtectors -Volume $volume
 
     if ($tpmProtectors.Count -eq 0) {
-        Write-DeployLog -Id 1080 -Type Information -Message 'No existe protector basado en TPM. Se agregara protector TPM.'
+        Write-DeployLog -Id 1080 -Type Information -Message 'No TPM-based protector exists. A TPM protector will be added.'
         Add-BitLockerKeyProtector -MountPoint $MountPoint -TpmProtector -ErrorAction Stop | Out-Null
         Start-Sleep -Seconds 1
         $volume = Get-BitLockerState
@@ -304,23 +375,23 @@ try {
     }
 
     if ($tpmProtectors.Count -eq 0) {
-        throw 'No fue posible crear un protector TPM.'
+        throw 'Unable to create a TPM protector.'
     }
 
     # -------------------------------------------------------------------------
-    # 8. Reanudar proteccion si estaba suspendida
+    # 8. Resume protection if suspended
     # -------------------------------------------------------------------------
     $volume = Get-BitLockerState
 
     if ($volume.ProtectionStatus -eq 'Off' -and $volume.VolumeStatus -ne 'FullyDecrypted') {
-        Write-DeployLog -Id 1090 -Type Warning -Message 'El volumen esta cifrado o cifrandose pero la proteccion esta suspendida. Se intentara reanudar.'
+        Write-DeployLog -Id 1090 -Type Warning -Message 'The volume is encrypted or encrypting, but protection is suspended. Attempting to resume protection.'
         Resume-BitLocker -MountPoint $MountPoint -ErrorAction Stop | Out-Null
         Start-Sleep -Seconds 1
         $volume = Get-BitLockerState
     }
 
     # -------------------------------------------------------------------------
-    # 9. Estado final
+    # 9. Final status
     # -------------------------------------------------------------------------
     $volume = Get-BitLockerState
     $recoveryProtectors = Get-RecoveryProtectors -Volume $volume
@@ -329,29 +400,29 @@ try {
     $recoveryIds = ($recoveryProtectors | ForEach-Object { $_.KeyProtectorId }) -join ', '
     $tpmTypes    = ($tpmProtectors | ForEach-Object { $_.KeyProtectorType }) -join ', '
 
-    Write-DeployLog -Id 1100 -Type Information -Message "BitLocker OK. VolumeStatus=$($volume.VolumeStatus); ProtectionStatus=$($volume.ProtectionStatus); EncryptionPercentage=$($volume.EncryptionPercentage)%; RecoveryProtectorId=$recoveryIds; TPMProtector=$tpmTypes"
+    Write-DeployLog -Id 1100 -Type Information -Message "BitLocker configured successfully. VolumeStatus=$($volume.VolumeStatus); ProtectionStatus=$($volume.ProtectionStatus); EncryptionPercentage=$($volume.EncryptionPercentage)%; RecoveryProtectorId=$recoveryIds; TPMProtector=$tpmTypes"
 
     Write-Host ''
-    Write-Host '=============================================='
-    Write-Host ' BITLOCKER - RESULTADO'
-    Write-Host '=============================================='
-    Write-Host "Equipo             : $env:COMPUTERNAME"
-    Write-Host "Volumen            : $MountPoint"
-    Write-Host "Estado volumen      : $($volume.VolumeStatus)"
-    Write-Host "Proteccion          : $($volume.ProtectionStatus)"
-    Write-Host "Cifrado             : $($volume.EncryptionPercentage)%"
-    Write-Host "Recovery protectors : $($recoveryProtectors.Count)"
-    Write-Host "TPM protectors      : $($tpmProtectors.Count)"
+    Write-Host '==============================================' -ForegroundColor Green
+    Write-Host ' DEPLOYMENT RESULT' -ForegroundColor Green
+    Write-Host '==============================================' -ForegroundColor Green
+    Write-Host "Computer            : $env:COMPUTERNAME" -ForegroundColor Green
+    Write-Host "Volume              : $MountPoint" -ForegroundColor Green
+    Write-Host "Volume status       : $($volume.VolumeStatus)" -ForegroundColor Green
+    Write-Host "Protection status   : $($volume.ProtectionStatus)" -ForegroundColor Green
+    Write-Host "Encryption          : $($volume.EncryptionPercentage)%" -ForegroundColor Green
+    Write-Host "Recovery protectors : $($recoveryProtectors.Count)" -ForegroundColor Green
+    Write-Host "TPM protectors      : $($tpmProtectors.Count)" -ForegroundColor Green
     if ($RequireADBackup) {
-        Write-Host "Backup AD           : comando completado correctamente"
+        Write-Host "AD backup           : Command completed successfully" -ForegroundColor Green
     }
-    Write-Host "Log                 : $LogFile"
-    Write-Host '=============================================='
+    Write-Host "Log file            : $LogFile" -ForegroundColor Green
+    Write-Host '==============================================' -ForegroundColor Green
 
     exit $ExitCodes.Success
 }
 catch {
-    $message = "Error no controlado en BitLocker: $($_.Exception.Message)"
+    $message = "Unhandled BitLocker error: $($_.Exception.Message)"
     Write-DeployLog -Id 1999 -Type Error -Message $message
     exit $ExitCodes.UnexpectedError
 }
