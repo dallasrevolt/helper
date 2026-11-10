@@ -54,8 +54,12 @@ try {
 
     Set-Content -LiteralPath `$tempFile -Value `$code -Encoding UTF8 -ErrorAction Stop
 
-    & '$escapedShell' -NoProfile -ExecutionPolicy Bypass -File `$tempFile
-    `$scriptExitCode = `$LASTEXITCODE
+    `$process = Start-Process -FilePath '$escapedShell' `
+    -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', `$tempFile) `
+    -Wait `
+    -PassThru
+
+    `$scriptExitCode = `$process.ExitCode
 
     if (`$scriptExitCode -ne 0) {
         Write-Host "Script finished with exit code: `$scriptExitCode" -ForegroundColor Yellow
@@ -69,12 +73,12 @@ try {
     }
 
     Write-Host ''
-    Write-Host 'Press any key to close this window...' -ForegroundColor Cyan
+    Write-Host 'Press any key to close this window.' -ForegroundColor Cyan
 
     try {
         `$null = `$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
     } catch {
-        Read-Host 'Press Enter to close this window' | Out-Null
+        Read-Host 'Press Enter to close this window.' | Out-Null
     }
 }
 "@
