@@ -75,6 +75,8 @@ try {
         Read-Host 'Press Enter to close this window.' | Out-Null
     }
 }
+
+exit
 "@
 
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
