@@ -85,12 +85,12 @@ try {
         $wtArgs = @(
             'new-tab'
             '--title'
-            'BitLocker Deployment'
+            'BitLocker deployment'
             $shell
             '-NoProfile'
             '-ExecutionPolicy'
             'Bypass'
-            '-NoExit'
+            'NoExit'
             '-EncodedCommand'
             $encoded
         )
@@ -425,7 +425,7 @@ try {
 
     Write-Host ''
     Write-Host '==============================================' -ForegroundColor Green
-    Write-Host ' DEPLOYMENT RESULT' -ForegroundColor Green
+    Write-Host ' DEPLOYMENT RESULTS' -ForegroundColor Green
     Write-Host '==============================================' -ForegroundColor Green
     Write-Host "Computer            : $env:COMPUTERNAME" -ForegroundColor Green
     Write-Host "Volume              : $MountPoint" -ForegroundColor Green
