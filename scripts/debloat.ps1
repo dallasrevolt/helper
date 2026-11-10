@@ -4,7 +4,7 @@ $ProgressPreference = 'SilentlyContinue'
 Clear-Host
 
 while ($true) {
-    $answer = (Read-Host 'Check for installed apps? [Y]es / [Q]uit').Trim()
+    $answer = (Read-Host 'Check for installed apps? [Y]es / [Q]uit ').Trim()
 
     if ($answer -match '^(?i:y|yes)$') { break }
     if ($answer -match '^(?i:q|quit)$') { 
