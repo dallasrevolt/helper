@@ -158,9 +158,9 @@ function Write-DeployLog {
 
     $line = '{0:yyyy-MM-dd HH:mm:ss} [{1}] [{2}] {3}' -f (Get-Date), $Type, $Id, $Message
     $foregroundColor = switch ($Type) {
-        'Information' { 'Cyan' }
-        'Warning'     { 'Yellow' }
-        'Error'       { 'Red' }
+        'I' { 'Cyan' }
+        'W' { 'Yellow' }
+        'E' { 'Red' }
     }
 
     Write-Host $line -ForegroundColor $foregroundColor
@@ -234,9 +234,8 @@ function Backup-RecoveryProtectorsToAD {
 }
 
 # Confirm execution
-Write-Host '======================' -ForegroundColor Cyan
-Write-Host ' BITLOCKER DEPLOYMENT ' -ForegroundColor Cyan
-Write-Host '======================' -ForegroundColor Cyan
+Write-Host 'BITLOCKER DEPLOYMENT' -ForegroundColor Cyan -BackgroundColor White
+Write-Host ''
 Write-Host "Computer : $env:COMPUTERNAME"
 Write-Host "Volume   : $MountPoint"
 Write-Host "Method   : $EncryptionMethod"
@@ -424,9 +423,8 @@ try {
     Write-DeployLog -Id 1100 -Type Information -Message "BitLocker configured successfully. VolumeStatus=$($volume.VolumeStatus); ProtectionStatus=$($volume.ProtectionStatus); EncryptionPercentage=$($volume.EncryptionPercentage)%; RecoveryProtectorId=$recoveryIds; TPMProtector=$tpmTypes"
 
     Write-Host ''
-    Write-Host '====================' -ForegroundColor Green
-    Write-Host ' DEPLOYMENT RESULTS ' -ForegroundColor Green
-    Write-Host '====================' -ForegroundColor Green
+    Write-Host 'DEPLOYMENT RESULTS' -ForegroundColor Green -BackgroundColor White
+    Write-Host ''
     Write-Host "Computer            : $env:COMPUTERNAME" -ForegroundColor Green
     Write-Host "Volume              : $MountPoint" -ForegroundColor Green
     Write-Host "Volume status       : $($volume.VolumeStatus)" -ForegroundColor Green
@@ -438,7 +436,7 @@ try {
         Write-Host "AD backup           : Command completed successfully" -ForegroundColor Green
     }
     Write-Host "Log file            : $LogFile" -ForegroundColor Green
-    Write-Host '==============================================' -ForegroundColor Green
+    Write-Host ''
 
     exit $ExitCodes.Success
 } catch {
