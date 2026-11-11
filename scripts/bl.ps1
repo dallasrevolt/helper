@@ -259,7 +259,6 @@ Write-Host ''
 
 Initialize-Logging
 
-<#
 try {
     Write-DeployLog -Id 1000 -Type Information -Message "Starting BitLocker validation on $env:COMPUTERNAME. Volume: $MountPoint"
 
@@ -447,10 +446,3 @@ try {
     Write-DeployLog -Id 1999 -Type Error -Message $message
     exit $ExitCodes.UnexpectedError
 }
-#>
-
-# Test
-Write-Host ''
-Write-Host 'Hello World!' -ForegroundColor Green
-Write-Host ''
-exit 0
