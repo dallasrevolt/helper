@@ -241,7 +241,7 @@ function Backup-RecoveryProtectorsToAD {
 }
 
 # Confirm execution
-Write-Host 'BITLOCKER DEPLOYMENT' -ForegroundColor Cyan -BackgroundColor White
+Write-Host 'BITLOCKER DEPLOYMENT' -ForegroundColor White -BackgroundColor Cyan
 Write-Host ''
 Write-Host "Computer : $env:COMPUTERNAME"
 Write-Host "Volume   : $MountPoint"
@@ -249,10 +249,10 @@ Write-Host "Method   : $EncryptionMethod"
 Write-Host ''
 
 while ($true) {
-    $answer = (Read-Host 'Proceed with BitLocker configuration? [Y]es / [Q]uit ').Trim()
+    $answer = (Read-Host 'Proceed with BitLocker configuration? [Y]es / [N]o, quit ').Trim()
 
     if ($answer -match '^(?i:y|yes)$') { break }
-    if ($answer -match '^(?i:q|quit)$') { 
+    if ($answer -match '^(?i:n|no|q|quit)$') { 
         Write-Host 'Have a great rest of your day!' -ForegroundColor Yellow
         Write-Host ''
         return
