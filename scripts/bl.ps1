@@ -234,9 +234,9 @@ function Backup-RecoveryProtectorsToAD {
 }
 
 # Confirm execution
-Write-Host '==============================================' -ForegroundColor Cyan
-Write-Host ' BITLOCKER DEPLOYMENT' -ForegroundColor Cyan
-Write-Host '==============================================' -ForegroundColor Cyan
+Write-Host '======================' -ForegroundColor Cyan
+Write-Host ' BITLOCKER DEPLOYMENT ' -ForegroundColor Cyan
+Write-Host '======================' -ForegroundColor Cyan
 Write-Host "Computer : $env:COMPUTERNAME"
 Write-Host "Volume   : $MountPoint"
 Write-Host "Method   : $EncryptionMethod"
@@ -424,9 +424,9 @@ try {
     Write-DeployLog -Id 1100 -Type Information -Message "BitLocker configured successfully. VolumeStatus=$($volume.VolumeStatus); ProtectionStatus=$($volume.ProtectionStatus); EncryptionPercentage=$($volume.EncryptionPercentage)%; RecoveryProtectorId=$recoveryIds; TPMProtector=$tpmTypes"
 
     Write-Host ''
-    Write-Host '==============================================' -ForegroundColor Green
-    Write-Host ' DEPLOYMENT RESULTS' -ForegroundColor Green
-    Write-Host '==============================================' -ForegroundColor Green
+    Write-Host '====================' -ForegroundColor Green
+    Write-Host ' DEPLOYMENT RESULTS ' -ForegroundColor Green
+    Write-Host '====================' -ForegroundColor Green
     Write-Host "Computer            : $env:COMPUTERNAME" -ForegroundColor Green
     Write-Host "Volume              : $MountPoint" -ForegroundColor Green
     Write-Host "Volume status       : $($volume.VolumeStatus)" -ForegroundColor Green
