@@ -156,11 +156,18 @@ function Write-DeployLog {
         [Parameter(Mandatory=$true)][string]$Message
     )
 
-    $line = '{0:yyyy-MM-dd HH:mm:ss} [{1}] [{2}] {3}' -f (Get-Date), $Type, $Id, $Message
+    $typeInitial = switch ($Type) {
+        'Information' { 'I' }
+        'Warning'     { 'W' }
+        'Error'       { 'E' }
+    }
+
+    $line = '{0:yyyy-MM-dd HH:mm:ss} [{1}] [{2}] {3}' -f (Get-Date), $typeInitial, $Id, $Message
+
     $foregroundColor = switch ($Type) {
-        'I' { 'Cyan' }
-        'W' { 'Yellow' }
-        'E' { 'Red' }
+        'Information' { 'Cyan' }
+        'Warning'     { 'Yellow' }
+        'Error'       { 'Red' }
     }
 
     Write-Host $line -ForegroundColor $foregroundColor
