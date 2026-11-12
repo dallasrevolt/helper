@@ -84,80 +84,28 @@ function Remove-OneDrive {
         if (-not $after.Installed) {
             try {
                 if (Test-Path -LiteralPath $before.Root) {
-                    try {
-                        Remove-Item -LiteralPath $before.Root -Recurse -Force -ErrorAction Stop
-                    } catch {
-                        $root = $before.Root
-                        $errorFile = Join-Path $env:TEMP 'OneDrive-cleanup-error.log'
-                    
-                        $escapedRoot = $root.Replace("'", "''")
-                        $escapedErrorFile = $errorFile.Replace("'", "''")
-                    
-                        $cleanupScript = @"
-                    `$ErrorActionPreference = 'Stop'
-                    `$root = '$escapedRoot'
-                    `$errorFile = '$escapedErrorFile'
-                    
-                    try {
-                        if (Test-Path -LiteralPath `$root) {
-                            Remove-Item -LiteralPath `$root -Recurse -Force -ErrorAction Stop
-                        }
-                    
-                        if (Test-Path -LiteralPath `$root) {
-                            throw 'The folder still exists after removal.'
-                        }
-                    
-                        exit 0
-                    }
-                    catch {
-                        `$_.Exception.Message | Set-Content -LiteralPath `$errorFile
-                        exit 1
-                    }
-"@
-
-                        $encodedCommand = [Convert]::ToBase64String(
-                            [Text.Encoding]::Unicode.GetBytes($cleanupScript)
-                        )
-                    
-                        if (Test-Path -LiteralPath $errorFile) {
-                            Remove-Item -LiteralPath $errorFile -Force
-                        }
-                    
-                        $elevatedProc = Start-Process -FilePath 'powershell.exe' `
-                            -Verb RunAs `
-                            -ArgumentList @(
-                                '-NoProfile',
-                                '-ExecutionPolicy', 'Bypass',
-                                '-EncodedCommand', $encodedCommand
-                            ) `
-                            -Wait `
-                            -PassThru `
-                            -ErrorAction Stop
-                    
-                        if ($elevatedProc.ExitCode -ne 0) {
-                            $cleanupError = 'Unknown error.'
-                    
-                            if (Test-Path -LiteralPath $errorFile) {
-                                $cleanupError = Get-Content -LiteralPath $errorFile -Raw
-                                Remove-Item -LiteralPath $errorFile -Force
-                            }
-                    
-                            throw "Elevated folder removal failed: $cleanupError"
-                        }
-                    
-                        if (Test-Path -LiteralPath $root) {
-                            throw 'The folder still exists after the elevated removal attempt.'
-                        }
-                    }
+                    Remove-Item -LiteralPath $before.Root -Recurse -Force -ErrorAction Stop
                 }
 
                 Write-Host "`rUninstalling OneDrive... ✓ Done." -ForegroundColor Green
             } catch {
-                Write-Host "`rOneDrive: ✓ Uninstalled, but couldn't remove the remaining folder: $($_.Exception.Message)" -ForegroundColor Yellow
-            } 
+                $errorFile = Join-Path $env:TEMP 'OneDrive-cleanup-error.log'
+
+                @(
+                    "Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+                    "Path: $($before.Root)"
+                    "Exception: $($_.Exception.GetType().FullName)"
+                    "Message: $($_.Exception.Message)"
+                    "HRESULT: $($_.Exception.HResult)"
+                    "FullyQualifiedErrorId: $($_.FullyQualifiedErrorId)"
+                ) | Set-Content -LiteralPath $errorFile -Encoding UTF8
+
+                Write-Host "`rOneDrive: ✓ Uninstalled, but folder removal failed. Details saved to $errorFile" -ForegroundColor Yellow
+            }
         } else {
             Write-Host "`rOneDrive: ✗ Couldn't uninstall (exit code $($proc.ExitCode))." -ForegroundColor Red
         }
+        
     } catch {
         Write-Host "`rOneDrive: ✗ $($_.Exception.Message)" -ForegroundColor Red
     }
