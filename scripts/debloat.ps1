@@ -59,53 +59,71 @@ function Find-OneDriveSetup {
     return $null
 }
 
+
 function Remove-OneDrive {
     $before = Get-OneDriveState
+
     if (-not $before.Installed) {
         Write-Host 'OneDrive: ✓ Already uninstalled.'
         return
     }
 
     $setup = Find-OneDriveSetup $before
+
     if (-not $setup) {
         Write-Host 'OneDrive: ✗ Uninstaller not found.' -ForegroundColor Red
         return
     }
 
     Write-Host 'Uninstalling OneDrive...' -NoNewline
+
     try {
         $proc = Start-Process -FilePath $setup -ArgumentList '/uninstall' -PassThru -Wait -ErrorAction Stop
+
         $deadline = (Get-Date).AddSeconds(45)
+
         do {
             Start-Sleep -Seconds 1
             $after = Get-OneDriveState
         } while ($after.Installed -and (Get-Date) -lt $deadline)
 
-        if (-not $after.Installed) {
-            try {
-                if (Test-Path -LiteralPath $before.Root) {
-                    Remove-Item -LiteralPath $before.Root -Recurse -Force -ErrorAction Stop
-                }
-
-                Write-Host "`rUninstalling OneDrive... ✓ Done." -ForegroundColor Green
-            } catch {
-                $errorFile = Join-Path $env:TEMP 'OneDrive-cleanup-error.log'
-
-                @(
-                    "Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-                    "Path: $($before.Root)"
-                    "Exception: $($_.Exception.GetType().FullName)"
-                    "Message: $($_.Exception.Message)"
-                    "HRESULT: $($_.Exception.HResult)"
-                    "FullyQualifiedErrorId: $($_.FullyQualifiedErrorId)"
-                ) | Set-Content -LiteralPath $errorFile -Encoding UTF8
-
-                Write-Host "`rOneDrive: ✓ Uninstalled, but folder removal failed. Details saved to $errorFile" -ForegroundColor Yellow
-            }
-        } else {
+        if ($after.Installed) {
             Write-Host "`rOneDrive: ✗ Couldn't uninstall (exit code $($proc.ExitCode))." -ForegroundColor Red
+            return
         }
-        
+
+        # Check whether Explorer has loaded the OneDrive shell extension.
+        $explorerUsingDll = $false
+
+        try {
+            $explorerUsingDll = @(
+                Get-Process explorer -ErrorAction SilentlyContinue |
+                    ForEach-Object { $_.Modules } |
+                    Where-Object { $_.ModuleName -eq 'FileSyncShell64.dll' }
+            ).Count -gt 0
+        } catch {
+            # Module inspection may be restricted.
+        }
+
+        # Restart Explorer only when the OneDrive DLL is loaded.
+        if ($explorerUsingDll) {
+            Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+            Start-Process explorer.exe
+            Start-Sleep -Seconds 2
+        }
+
+        # Remove remaining OneDrive files.
+        try {
+            if (Test-Path -LiteralPath $before.Root) {
+                Remove-Item -LiteralPath $before.Root -Recurse -Force -ErrorAction Stop
+            }
+
+            Write-Host "`rUninstalling OneDrive... ✓ Done." -ForegroundColor Green
+
+        } catch {
+            Write-Host "`rOneDrive: ✓ Uninstalled, but folder removal failed." -ForegroundColor Yellow
+        }
+
     } catch {
         Write-Host "`rOneDrive: ✗ $($_.Exception.Message)" -ForegroundColor Red
     }
